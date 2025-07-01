@@ -3,11 +3,16 @@
 #include "DXSample.h"
 #include "DXRaytracingHelper.h"
 #include "SceneDefines.h"
+#include "StepTimer.h"
 #include "ConstantBuffer.hpp"
+#include "StructuredBuffer.hpp"
 #include "Camera.h"
 #include "Plane.h"
 #include "Box.h"
+#include "Sphere.h"
 #include "AModel.h"
+#include "SpatialHashGrid.hpp"
+#include "BVHBuilder.hpp"
 
 using namespace std;
 using namespace ConstantBufferTypes;
@@ -23,7 +28,7 @@ public:
 
     // DXSample
     virtual void OnInit();
-    virtual void OnUpdate() {};
+    virtual void OnUpdate();
     virtual void OnRender();
     virtual void OnSizeChanged(UINT width, UINT height, bool minimized) {};
     virtual void OnDestroy();
@@ -33,6 +38,7 @@ public:
 
 private:
     static const UINT FrameCount = 2;
+    UINT SDFInstanceCount = 0;
 
 	unique_ptr<ResourceManager> m_resourceManager;
 
@@ -47,19 +53,28 @@ private:
 
     // Geometry
 	std::vector<unique_ptr<Object>> m_objects;
+    std::vector<ObjectInstance> m_instances;
 
     // Raytracing scene
     ConstantBuffer<SceneConstantBuffer> m_sceneCB;
     std::vector<D3D12_RAYTRACING_AABB> m_aabbs;
 
+    StructuredBuffer<SDFObjectData> m_sdfObjectsSB;
+
+    /*StructuredBuffer<HashTableEntry> m_hashTableSB;
+    StructuredBuffer<InstanceIndex> m_instanceIndicesSB;*/
+
     // Acceleration structure
     std::vector<ComPtr<ID3D12Resource>> m_bottomLevelAS;
-    ComPtr<ID3D12Resource> m_topLevelAS;
+    unique_ptr<AccelerationStructureBuffers> m_topLevelAS;
+    //UINT m_tlasInstanceCount = 0;
 
     // Raytracing output
     ComPtr<ID3D12Resource> m_raytracingOutput;
     D3D12_GPU_DESCRIPTOR_HANDLE m_raytracingOutputResourceUAVGpuDescriptor;
     UINT m_raytracingOutputResourceUAVDescriptorHeapIndex = UINT_MAX;
+
+    D3D12_GPU_DESCRIPTOR_HANDLE m_sdfTexturesGpuDescriptor;
 
     // Shader tables
     static const wchar_t* c_hitGroupNames_TriangleGeometry[RayType::Count];
@@ -79,6 +94,8 @@ private:
 
     // Scene
     Camera m_camera;
+    StepTimer m_timer;
+    BVHBuilder m_bvhBuilder;
 
     void CreateDeviceDependentResources();
     void CreateWindowSizeDependentResources();
@@ -101,17 +118,25 @@ private:
     void BuildGeometry();
     void BuildGeometryDescsForBottomLevelAS(vector<vector<D3D12_RAYTRACING_GEOMETRY_DESC>>& geometryDescs);
     template <class InstanceDescType, class BLASPtrType>
-    void BuildBottomLevelASInstanceDescs(vector<BLASPtrType>& bottomLevelASaddresses, ComPtr<ID3D12Resource>* instanceDescsResource);
+    void BuildBottomLevelASInstanceDescs(vector<BLASPtrType>& bottomLevelASaddresses, UINT& instanceDescsCount, bool updateOnly = false);
     AccelerationStructureBuffers BuildBottomLevelAS(const vector<D3D12_RAYTRACING_GEOMETRY_DESC>& geometryDescs, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE);
-    AccelerationStructureBuffers BuildTopLevelAS(AccelerationStructureBuffers* bottomLevelAS, UINT bottomLevelASCount, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE);
+    void BuildTopLevelAS(AccelerationStructureBuffers* bottomLevelAS, UINT bottomLevelASCount, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE);
+    void UpdateTopLevelAS();
     void BuildAccelerationStructures();
     void CreateConstantBuffers();
+    void CreateStructuredBuffers();
     void BuildShaderTables();
 	void CreateRaytracingOutputResource();
 
+    //void BuildSpatialHashGrid();
+    void BuildSDfBVH();
+    void CalculateFrameStats();
 
     // Application state
+    void BuildSDFObjectsData();
     void UpdateCameraMatrices();
+    void UpdateSDFObjectsData();
+    //void BuildHashGridData();
 };
 
 inline bool CheckRaytracingSupport(IDXGIAdapter1* adapter)
@@ -122,4 +147,10 @@ inline bool CheckRaytracingSupport(IDXGIAdapter1* adapter)
     return SUCCEEDED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&testDevice)))
         && SUCCEEDED(testDevice->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &featureSupportData, sizeof(featureSupportData)))
         && featureSupportData.RaytracingTier != D3D12_RAYTRACING_TIER_NOT_SUPPORTED;
+}
+inline bool CheckRayQuerySupport(ID3D12Device* device)
+{
+    D3D12_FEATURE_DATA_D3D12_OPTIONS5 options5 = {};
+    device->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS5, &options5, sizeof(options5));
+    return options5.RaytracingTier >= D3D12_RAYTRACING_TIER_1_1;
 }

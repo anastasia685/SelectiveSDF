@@ -5,6 +5,40 @@ using namespace std;
 
 inline void ProcessNode(const aiNode* node, const aiScene* scene, vector<Vertex>& vertices, vector<Index>& indices);
 inline void ProcessMesh(const aiMesh* mesh, const aiScene* scene, vector<Vertex>& vertices, vector<UINT>& indices);
+inline vector<float> LoadSDFTexture(const string& filename, const XMUINT3& resolution);
+
+void AModel::BuildSDF(ID3D12Device* device, ID3D12GraphicsCommandList* commandList)
+{
+	const XMUINT3 resolution = { 64, 64, 64 }; //TODO: this is temporary
+	std::vector<float> sdfData = LoadSDFTexture("res/sdfs/" + m_fileName + ".raw", resolution);
+
+	const UINT textureDataSize = static_cast<UINT>(sdfData.size() * sizeof(float));
+
+	AllocateTexture(device, resolution, &m_sdfBuffer.resource);
+	AllocateBuffer(
+		device,
+		D3D12_HEAP_TYPE_UPLOAD,
+		textureDataSize,
+		&m_stagingSdfBuffer,
+		D3D12_RESOURCE_STATE_GENERIC_READ,
+		D3D12_RESOURCE_FLAG_NONE,
+		sdfData.data());
+
+	D3D12_SUBRESOURCE_DATA textureSubresource = {};
+	textureSubresource.pData = sdfData.data();
+	textureSubresource.RowPitch = resolution.z * sizeof(float);  // Bytes per row
+	textureSubresource.SlicePitch = resolution.x * resolution.y * sizeof(float);  // Bytes per Z-slice
+
+	UpdateSubresources(commandList, m_sdfBuffer.resource.Get(), m_stagingSdfBuffer.Get(), 0, 0, 1, &textureSubresource);
+
+
+	auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+		m_sdfBuffer.resource.Get(),
+		D3D12_RESOURCE_STATE_COPY_DEST,
+		D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+	);
+	commandList->ResourceBarrier(1, &barrier);
+}
 
 void AModel::BuildTriangleGeometry(ID3D12Device* device, vector<Index>& indices, vector<Vertex>& vertices)
 {
@@ -12,7 +46,7 @@ void AModel::BuildTriangleGeometry(ID3D12Device* device, vector<Index>& indices,
 	Assimp::Importer importer;
 
 	// Load file with post-processing flags
-	const aiScene* scene = importer.ReadFile("res/models/monkey.obj",
+	const aiScene* scene = importer.ReadFile("res/models/" + m_fileName + ".obj",
 		aiProcess_Triangulate |              // Convert to triangles
 		aiProcess_GenNormals |               // Generate normals if missing
 		aiProcess_CalcTangentSpace |         // Calculate tangents/bitangents
@@ -38,7 +72,7 @@ void AModel::BuildAABBs(ID3D12Device* device, vector<D3D12_RAYTRACING_AABB>& aab
 	m_aabbCount = 1;
 
 	aabbs.push_back(
-		{ -0.5f, -0.5f, -0.5f, 0.5f,  0.5f,  0.5f }
+		{ -0.6f, -0.6f, -0.6f, 0.6f,  0.6f,  0.6f }
 	);
 }
 
@@ -91,4 +125,18 @@ inline void ProcessMesh(const aiMesh* mesh, const aiScene* scene, vector<Vertex>
 			indices.push_back(index);
 		}
 	}
+}
+inline vector<float> LoadSDFTexture(const string& filename, const XMUINT3& resolution)
+{
+	vector<float> data(resolution.x * resolution.y * resolution.z);
+
+	ifstream file(filename, ios::binary);
+	if (!file) {
+		throw runtime_error("Cannot open SDF file: " + filename);
+	}
+
+	file.read(reinterpret_cast<char*>(data.data()), data.size() * sizeof(float));
+	file.close();
+
+	return data;
 }

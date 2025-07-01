@@ -9,8 +9,7 @@ using namespace DX;
 const wchar_t* SelectiveSDF::c_raygenShaderName = L"RayGen";
 const wchar_t* SelectiveSDF::c_intersectionShaderNames[] =
 {
-    L"Intersection_SDF_Box",
-    L"Intersection_SDF_Texture",
+    L"Intersection_SDF",
 };
 const wchar_t* SelectiveSDF::c_closestHitShaderNames[] =
 {
@@ -28,8 +27,7 @@ const wchar_t* SelectiveSDF::c_hitGroupNames_TriangleGeometry[] =
 };
 const wchar_t* SelectiveSDF::c_hitGroupNames_AABBGeometry[][RayType::Count] =
 {
-    { L"HitGroup_SDF_Box" },
-    { L"HitGroup_SDF_Texture" },
+    { L"HitGroup_SDF" },
 };
 
 SelectiveSDF::SelectiveSDF(UINT width, UINT height, std::wstring name) : DXSample(width, height, name)
@@ -37,18 +35,52 @@ SelectiveSDF::SelectiveSDF(UINT width, UINT height, std::wstring name) : DXSampl
     m_resourceManager = make_unique<ResourceManager>();
 
 	unique_ptr<Plane> plane = make_unique<Plane>();
-    plane->AddInstanceData({ 0, -0.5, 0 }, { 0, 0, 0 }, { 5, 1, 5 });
+    // plane instances
+    {
+        m_instances.push_back({ 0, { 0, -0.5, 0 }, { 0, 0, 0 }, 50 });
+    }
 
     unique_ptr<Box> box = make_unique<Box>();
-    box->AddInstanceData({ -0.7, 0, 0 });
+    // box instances
+    {
+        m_instances.push_back({ 1, { -1.2, 0, 0 }, { 0, 0, 0 }, 1 });
 
-	unique_ptr<AModel> aModel = make_unique<AModel>();
-    aModel->AddInstanceData({ 0.7, 0, 0 });
+        SDFInstanceCount += 1;
+    }
+
+    unique_ptr<Sphere> sphere = make_unique<Sphere>();
+    // sphere instances
+    {
+        m_instances.push_back({ 2, {  1.2, 0, 0}, {0, 0, 0}, 1 });
+
+        SDFInstanceCount += 1;
+    }
+
+	unique_ptr<AModel> aModel = make_unique<AModel>("monkey");
+    // monkey instances
+    {
+        /*for (int i = 0; i < 10; i++)
+        {
+            for (int j = 0; j < 10; j++)
+            {
+                m_instances.push_back({ 1, { -5.0f + i * 1.0f, 0, -5.0f + j * 1.0f }, { 0, 0, 0 }, 1 });
+            }
+        }
+        
+        SDFInstanceCount += 100;*/
+
+        m_instances.push_back({ 3, { 0, 0, 0 }, {0, 0, 0}, 1 });
+        SDFInstanceCount += 1;
+    }
 
 
     m_objects.push_back(move(plane));
     m_objects.push_back(move(box));
+    m_objects.push_back(move(sphere));
     m_objects.push_back(move(aModel));
+
+    //BuildSpatialHashGrid();
+    //BuildSDfBVH();
 
 	UpdateForSizeChange(width, height);
 }
@@ -75,10 +107,25 @@ void SelectiveSDF::OnInit()
     m_deviceResources->CreateDeviceResources();
     m_deviceResources->CreateWindowSizeDependentResources();
 
+    ThrowIfFalse(CheckRayQuerySupport(m_deviceResources->GetD3DDevice()), L"ERROR: RayQuery inside intersection shaders by your OS, GPU and/or driver.\n\n");
+
     CreateDeviceDependentResources();
     CreateWindowSizeDependentResources();
 
     InitializeScene();
+}
+
+void SelectiveSDF::OnUpdate()
+{
+    m_timer.Tick();
+    CalculateFrameStats();
+
+    float translationX = sinf(m_timer.GetTotalSeconds() * 0.3) * 2;
+    m_instances[3].position = XMFLOAT3(translationX, 0, 0);
+
+    //TODO: reconstruct camera matrices and update camera cb after implementing camera movement
+
+    UpdateSDFObjectsData();
 }
 
 void SelectiveSDF::OnRender()
@@ -145,11 +192,10 @@ void SelectiveSDF::CreateDeviceDependentResources()
     // Create constant buffers for the scene.
     CreateConstantBuffers();
 
+    CreateStructuredBuffers();
+
     // Build shader tables, which define shaders and their local root arguments.
     BuildShaderTables();
-
-    // Create an output 2D texture to store the raytracing result to.
-    //CreateRaytracingOutputResource();
 }
 
 void SelectiveSDF::CreateWindowSizeDependentResources()
@@ -168,13 +214,14 @@ void SelectiveSDF::ReleaseDeviceDependentResources()
     m_raytracingGlobalRootSignature.Reset();
 
     m_sceneCB.Release();
-    /*m_indexBuffer.resource.Reset();
-    m_vertexBuffer.resource.Reset();
-    m_aabbBuffer.resource.Reset();*/
+    m_sdfObjectsSB.Release();
+
+    /*m_hashTableSB.Release();
+    m_instanceIndicesSB.Release();*/
 
     //ResetComPtrArray(&m_bottomLevelAS);
     m_bottomLevelAS.clear();
-    m_topLevelAS.Reset();
+    //m_topLevelAS.reset();
 
     m_raytracingOutput.Reset();
     m_raytracingOutputResourceUAVDescriptorHeapIndex = UINT_MAX;
@@ -190,25 +237,20 @@ void SelectiveSDF::InitializeScene()
 {
     auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
 
-    // import models
-    // set up cb values for camera, colors, etc.
+    //TODO: set initial camera position and orientation
+    UpdateCameraMatrices();
 
-    // Setup camera.
-    {
-        //TODO: set initial camera position and orientation
-        UpdateCameraMatrices();
-    }
+    BuildSDFObjectsData();
 
-	// Add objects to the scene.
-    {
-
-    }
+    //BuildHashGridData();
 }
 
 void SelectiveSDF::Raytrace()
 {
     auto commandList = m_deviceResources->GetCommandList();
     auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
+
+    UpdateTopLevelAS();
 
     auto DispatchRays = [&](auto* raytracingCommandList, auto* stateObject, auto* dispatchDesc)
     {
@@ -232,8 +274,9 @@ void SelectiveSDF::Raytrace()
     {
         descriptorSetCommandList->SetDescriptorHeaps(1, &descriptorHeap);
         // Set index and successive vertex buffer decriptor tables.
-        commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::VertexBuffers, m_objects[0]->GetIndexBuffer().gpuDescriptorHandle);
         commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::OutputView, m_raytracingOutputResourceUAVGpuDescriptor);
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::VertexBuffers, m_objects[0]->GetIndexBuffer().gpuDescriptorHandle);
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFTextures, m_sdfTexturesGpuDescriptor);
     };
 
     commandList->SetComputeRootSignature(m_raytracingGlobalRootSignature.Get());
@@ -242,12 +285,21 @@ void SelectiveSDF::Raytrace()
     {
 		m_sceneCB.CopyStagingToGpu(frameIndex);
         commandList->SetComputeRootConstantBufferView(GlobalRootSignature::Slot::SceneConstant, m_sceneCB.GpuVirtualAddress(frameIndex));
+
+        m_sdfObjectsSB.CopyStagingToGpu(frameIndex);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::SDFObjectsData, m_sdfObjectsSB.GpuVirtualAddress(frameIndex));
+
+
+        /*m_hashTableSB.CopyStagingToGpu(frameIndex);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::HashTable, m_hashTableSB.GpuVirtualAddress(frameIndex));
+        m_instanceIndicesSB.CopyStagingToGpu(frameIndex);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::InstanceIndices, m_instanceIndicesSB.GpuVirtualAddress(frameIndex));*/
     }
 
     // Bind the heaps, acceleration structure and dispatch rays.  
     D3D12_DISPATCH_RAYS_DESC dispatchDesc = {};
     SetCommonPipelineState(commandList);
-    commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::AccelerationStructure, m_topLevelAS->GetGPUVirtualAddress());
+    commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::AccelerationStructure, m_topLevelAS->accelerationStructure->GetGPUVirtualAddress());
     DispatchRays(m_dxrCommandList.Get(), m_dxrStateObject.Get(), &dispatchDesc);
 }
 
@@ -294,9 +346,19 @@ void SelectiveSDF::CreateRootSignatures()
     // Global Root Signature
     // This is a root signature that is shared across all raytracing shaders invoked during a DispatchRays() call.
     {
-        CD3DX12_DESCRIPTOR_RANGE ranges[2]; // Perfomance TIP: Order from most frequent to least frequent.
+        CD3DX12_DESCRIPTOR_RANGE ranges[3]; // Perfomance TIP: Order from most frequent to least frequent.
         ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);  // 1 output texture
-        ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, m_objects.size() * 2, 1);  // index and vertex buffers per object
+        ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, m_objects.size() * 2, 4, 0);  // index and vertex buffers per object
+        ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFInstanceCount, 4, 1);
+
+        CD3DX12_STATIC_SAMPLER_DESC staticSamplers[1];
+        staticSamplers[0].Init(
+            0,
+            D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP
+        );
 
         CD3DX12_ROOT_PARAMETER rootParameters[GlobalRootSignature::Slot::Count];
         rootParameters[GlobalRootSignature::Slot::OutputView].InitAsDescriptorTable(1, &ranges[0]);
@@ -304,7 +366,15 @@ void SelectiveSDF::CreateRootSignatures()
         rootParameters[GlobalRootSignature::Slot::SceneConstant].InitAsConstantBufferView(0);
         //rootParameters[GlobalRootSignature::Slot::AABBattributeBuffer].InitAsShaderResourceView(3);
         rootParameters[GlobalRootSignature::Slot::VertexBuffers].InitAsDescriptorTable(1, &ranges[1]);
+        rootParameters[GlobalRootSignature::Slot::SDFTextures].InitAsDescriptorTable(1, &ranges[2]);
+        rootParameters[GlobalRootSignature::Slot::SDFObjectsData].InitAsShaderResourceView(1);
+        rootParameters[GlobalRootSignature::Slot::HashTable].InitAsShaderResourceView(2);
+        rootParameters[GlobalRootSignature::Slot::InstanceIndices].InitAsShaderResourceView(3);
+
+
         CD3DX12_ROOT_SIGNATURE_DESC globalRootSignatureDesc(ARRAYSIZE(rootParameters), rootParameters);
+        globalRootSignatureDesc.NumStaticSamplers = 1;
+        globalRootSignatureDesc.pStaticSamplers = staticSamplers;
 
         SerializeAndCreateRaytracingRootSignature(globalRootSignatureDesc, &m_raytracingGlobalRootSignature);
     }
@@ -351,17 +421,7 @@ void SelectiveSDF::SerializeAndCreateRaytracingRootSignature(D3D12_ROOT_SIGNATUR
 
 void SelectiveSDF::CreateRaytracingPipelineStateObject()
 {
-    // Create subobjects that combine into a RTPSO:
-    // Subobjects need to be associated with DXIL exports (i.e. shaders) either by way of default or explicit associations.
-    // Default association applies to every exported shader entrypoint that doesn't have any of the same type of subobject associated with it.
-    // This simple sample utilizes default shader association except for local root signature subobject
-    // which has an explicit association specified purely for demonstration purposes.
-    // 4 - DXIL library
-    // 8 - Hit group types - 4 geometries (1 triangle, 3 aabb) x 2 ray types (ray, shadowRay)
-    // 1 - Shader config
-    // 6 - 3 x Local root signature and association
-    // 1 - Global root signature
-    // 1 - Pipeline config
+    // Create subobjects that combine into a RTPSO
     CD3DX12_STATE_OBJECT_DESC raytracingPipeline{ D3D12_STATE_OBJECT_TYPE_RAYTRACING_PIPELINE };
 
     // DXIL library
@@ -392,8 +452,6 @@ void SelectiveSDF::CreateRaytracingPipelineStateObject()
     // Pipeline config
     // Defines the maximum TraceRay() recursion depth.
     auto pipelineConfig = raytracingPipeline.CreateSubobject<CD3DX12_RAYTRACING_PIPELINE_CONFIG_SUBOBJECT>();
-    // PERFOMANCE TIP: Set max recursion depth as low as needed
-    // as drivers may apply optimization strategies for low recursion depths.
     UINT maxRecursionDepth = MAX_RAY_RECURSION_DEPTH;
     pipelineConfig->Config(maxRecursionDepth);
 
@@ -523,7 +581,7 @@ void SelectiveSDF::BuildGeometry()
     // triangle geometry
     for(auto& object : m_objects)
     {
-        object->BuildGeometry(m_deviceResources->GetD3DDevice(), m_deviceResources->GetCommandList());
+        object->BuildGeometry(device, commandList);
 
         auto& indexBuffer = object->GetIndexBuffer();
         auto& vertexBuffer = object->GetVertexBuffer();
@@ -535,13 +593,38 @@ void SelectiveSDF::BuildGeometry()
         ThrowIfFalse(descriptorIndexVB == descriptorIndexIB + 1, L"Vertex Buffer descriptor index must follow that of Index Buffer descriptor index");
 	}
 
+    // import sdf textures here
+    bool gpuHandleSet = false;
+    for (auto& object : m_objects)
+    {
+        auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+        if (hybridModelObject == nullptr) continue;
+
+        hybridModelObject->BuildSDF(device, commandList);
+
+
+        auto& sdfBuffer = hybridModelObject->GetSDFBuffer();
+        m_resourceManager->CreateTexture3DSRV(device, &sdfBuffer);
+
+        if (!gpuHandleSet)
+        {
+            m_sdfTexturesGpuDescriptor = sdfBuffer.gpuDescriptorHandle;
+            gpuHandleSet = true;
+        }
+    }
+
     // Execute to complete the copies
     m_deviceResources->ExecuteCommandList();
     m_deviceResources->WaitForGpu();
 
     for (auto& object : m_objects)
     {
-        object->ReleaseStagingBuffers();
+        auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+        if (hybridModelObject != nullptr)
+        {
+            hybridModelObject->ReleaseStagingBuffers();
+        }
+        else object->ReleaseStagingBuffers();
     }
 }
 
@@ -615,63 +698,83 @@ void SelectiveSDF::BuildGeometryDescsForBottomLevelAS(vector<vector<D3D12_RAYTRA
 }
 
 template <class InstanceDescType, class BLASPtrType>
-void SelectiveSDF::BuildBottomLevelASInstanceDescs(vector<BLASPtrType>& bottomLevelASaddresses, ComPtr<ID3D12Resource>* instanceDescsResource)
+void SelectiveSDF::BuildBottomLevelASInstanceDescs(vector<BLASPtrType>& bottomLevelASaddresses, UINT& instanceDescsCount, bool updateOnly)
 {
-    //const UINT BlasCount = bottomLevelASaddresses.size();
-
     auto device = m_deviceResources->GetD3DDevice();
 
     vector<InstanceDescType> instanceDescs;
     UINT blasIndex = 0;
-    for(UINT i = 0; i < m_objects.size(); i++)
-    {
-        InstanceDescType aabbInstanceDesc = {};
-        if (m_objects[i]->GetType() == ObjectType::Hybrid)
-        {
-            auto hybridObject = static_cast<HybridObject*>(m_objects[i].get());
 
-            aabbInstanceDesc.InstanceMask = 2;
-            aabbInstanceDesc.InstanceContributionToHitGroupIndex = hybridObject->GetHitGroupIndex();
-            aabbInstanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex++];
-        }
+    for (UINT i = 0; i < m_instances.size(); i++)
+    {
+        auto& instance = m_instances[i];
+        bool isHybrid = m_objects[instance.objectIndex]->GetType() == ObjectType::Hybrid;
 
         InstanceDescType instanceDesc = {};
-        instanceDesc.InstanceID = i;
-        instanceDesc.InstanceMask = 1;
+        instanceDesc.InstanceID = instance.objectIndex;
+        instanceDesc.InstanceMask = 0x01;
         instanceDesc.InstanceContributionToHitGroupIndex = 0;
-        instanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex++];
-		
-		auto& instanceData = m_objects[i]->GetInstanceData();
-        for(auto& instance : instanceData)
-        {
-            if (m_objects[i]->GetType() == ObjectType::Hybrid)
-            {
-                XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(aabbInstanceDesc.Transform), instance.CalculateTransform());
-                instanceDescs.push_back(aabbInstanceDesc);
-            }
+        instanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex];
 
-            XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(instanceDesc.Transform), instance.CalculateTransform());
-            instanceDescs.push_back(instanceDesc);
-		}
-	}
+        InstanceDescType aabbInstanceDesc = {};
+        if (isHybrid)
+        {
+            instanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex + 1];
+            instanceDesc.InstanceMask = 0x04;
+
+            auto hybridObject = static_cast<HybridObject*>(m_objects[instance.objectIndex].get());
+
+            aabbInstanceDesc.InstanceID = instance.objectIndex; // same instance id as its associated polygonal geometry
+            aabbInstanceDesc.InstanceMask = 0x02;
+            //aabbInstanceDesc.InstanceContributionToHitGroupIndex = hybridObject->GetHitGroupIndex();
+            aabbInstanceDesc.InstanceContributionToHitGroupIndex = 1; // probably no need for separate intersection shaders per hybrid object type??
+            aabbInstanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex];
+        }
+
+
+        if (isHybrid)
+        {
+            XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(aabbInstanceDesc.Transform), instance.CalculateTransform());
+            instanceDescs.push_back(aabbInstanceDesc);
+        }
+        XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(instanceDesc.Transform), instance.CalculateTransform());
+        instanceDescs.push_back(instanceDesc);
+
+        if (i < m_instances.size() - 1 && m_instances[i + 1].objectIndex > instance.objectIndex)
+        {
+            blasIndex += isHybrid ? 2 : 1;
+        }
+    }
 
     if(instanceDescs.empty())
     {
         throw std::runtime_error("No instance descriptions were created from bottom level acceleration structure.");
 	}
 
+    instanceDescsCount = instanceDescs.size();
+
     UINT64 bufferSize = static_cast<UINT64>(instanceDescs.size() * sizeof(instanceDescs[0]));
 
-    AllocateBuffer(
-        device, 
-        D3D12_HEAP_TYPE_UPLOAD,
-        bufferSize, 
-        &(*instanceDescsResource), 
-        D3D12_RESOURCE_STATE_GENERIC_READ,
-		D3D12_RESOURCE_FLAG_NONE,
-        instanceDescs.data(),
-        L"InstanceDescs"
-    );
+    if (!updateOnly)
+    {
+        AllocateBuffer(
+            device,
+            D3D12_HEAP_TYPE_UPLOAD,
+            bufferSize,
+            &m_topLevelAS->instanceDesc,
+            D3D12_RESOURCE_STATE_GENERIC_READ,
+            D3D12_RESOURCE_FLAG_NONE,
+            instanceDescs.data(),
+            L"InstanceDescs"
+        );
+    }
+    else
+    {
+        void* pMappedData;
+        m_topLevelAS->instanceDesc->Map(0, nullptr, &pMappedData);
+        memcpy(pMappedData, instanceDescs.data(), bufferSize);
+        m_topLevelAS->instanceDesc->Unmap(0, nullptr);
+    }
 };
 
 AccelerationStructureBuffers SelectiveSDF::BuildBottomLevelAS(const vector<D3D12_RAYTRACING_GEOMETRY_DESC>& geometryDescs, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags)
@@ -707,12 +810,6 @@ AccelerationStructureBuffers SelectiveSDF::BuildBottomLevelAS(const vector<D3D12
     );
 
     // Allocate resources for acceleration structures.
-    // Acceleration structures can only be placed in resources that are created in the default heap (or custom heap equivalent). 
-    // Default heap is OK since the application doesn’t need CPU read/write access to them. 
-    // The resources that will contain acceleration structures must be created in the state D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, 
-    // and must have resource flag D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS. The ALLOW_UNORDERED_ACCESS requirement simply acknowledges both: 
-    //  - the system will be doing this type of access in its implementation of acceleration structure builds behind the scenes.
-    //  - from the app point of view, synchronization of writes/reads to acceleration structures is accomplished using UAV barriers.
     {
 		D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT;
         D3D12_RESOURCE_STATES initialResourceState = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
@@ -744,62 +841,16 @@ AccelerationStructureBuffers SelectiveSDF::BuildBottomLevelAS(const vector<D3D12
     return bottomLevelASBuffers;
 }
 
-AccelerationStructureBuffers SelectiveSDF::BuildTopLevelAS(AccelerationStructureBuffers* bottomLevelAS, UINT bottomLevelASCount, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags)
+void SelectiveSDF::BuildTopLevelAS(AccelerationStructureBuffers* bottomLevelAS, UINT bottomLevelASCount, D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAGS buildFlags)
 {
     auto device = m_deviceResources->GetD3DDevice();
     auto commandList = m_deviceResources->GetCommandList();
-    ComPtr<ID3D12Resource> scratch;
-    ComPtr<ID3D12Resource> topLevelAS;
 
-    // Get required sizes for an acceleration structure.
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC topLevelBuildDesc = {};
-    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& topLevelInputs = topLevelBuildDesc.Inputs;
-    topLevelInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
-    topLevelInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
-    topLevelInputs.Flags = buildFlags;
-    topLevelInputs.NumDescs = bottomLevelASCount;
-
-    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO topLevelPrebuildInfo = {};
-    m_dxrDevice->GetRaytracingAccelerationStructurePrebuildInfo(&topLevelInputs, &topLevelPrebuildInfo);
-    ThrowIfFalse(topLevelPrebuildInfo.ResultDataMaxSizeInBytes > 0);
-
-    AllocateBuffer(
-        device, 
-        D3D12_HEAP_TYPE_DEFAULT, 
-        topLevelPrebuildInfo.ScratchDataSizeInBytes, 
-        &scratch, 
-        D3D12_RESOURCE_STATE_UNORDERED_ACCESS, 
-        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS, 
-        nullptr, 
-        L"ScratchResource"
-    );
-
-    // Allocate resources for acceleration structures.
-    // Acceleration structures can only be placed in resources that are created in the default heap (or custom heap equivalent). 
-    // Default heap is OK since the application doesn’t need CPU read/write access to them. 
-    // The resources that will contain acceleration structures must be created in the state D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE, 
-    // and must have resource flag D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS. The ALLOW_UNORDERED_ACCESS requirement simply acknowledges both: 
-    //  - the system will be doing this type of access in its implementation of acceleration structure builds behind the scenes.
-    //  - from the app point of view, synchronization of writes/reads to acceleration structures is accomplished using UAV barriers.
-    {
-        D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT;
-        D3D12_RESOURCE_STATES initialResourceState = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
-        D3D12_RESOURCE_FLAGS resourceFlags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
-        AllocateBuffer(
-            device,
-            heapType,
-            topLevelPrebuildInfo.ResultDataMaxSizeInBytes,
-            &topLevelAS,
-            initialResourceState,
-            resourceFlags,
-            nullptr,
-            L"TopLevelAccelerationStructure"
-        );
-    }
+    m_topLevelAS = make_unique<AccelerationStructureBuffers>();
 
 
-    // Create instance descs for the bottom-level acceleration structures.
-    ComPtr<ID3D12Resource> instanceDescsResource;
+    // Create instance descs for the bottom-level acceleration structures
+    UINT topLevelASCount;
     {
 		vector<D3D12_GPU_VIRTUAL_ADDRESS> bottomLevelASaddresses;
 		bottomLevelASaddresses.reserve(bottomLevelASCount);
@@ -808,25 +859,86 @@ AccelerationStructureBuffers SelectiveSDF::BuildTopLevelAS(AccelerationStructure
         {
             bottomLevelASaddresses.push_back(bottomLevelAS[i].accelerationStructure->GetGPUVirtualAddress());
 		}
-        BuildBottomLevelASInstanceDescs<D3D12_RAYTRACING_INSTANCE_DESC>(bottomLevelASaddresses, &instanceDescsResource);
+        BuildBottomLevelASInstanceDescs<D3D12_RAYTRACING_INSTANCE_DESC>(bottomLevelASaddresses, topLevelASCount);
+    }
+
+    // Get required sizes for an acceleration structure.
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC topLevelBuildDesc = {};
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_INPUTS& topLevelInputs = topLevelBuildDesc.Inputs;
+    topLevelInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    topLevelInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    topLevelInputs.Flags = buildFlags;
+    topLevelInputs.NumDescs = topLevelASCount;
+
+    D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO topLevelPrebuildInfo = {};
+    m_dxrDevice->GetRaytracingAccelerationStructurePrebuildInfo(&topLevelInputs, &topLevelPrebuildInfo);
+    ThrowIfFalse(topLevelPrebuildInfo.ResultDataMaxSizeInBytes > 0);
+
+    AllocateBuffer(
+        device,
+        D3D12_HEAP_TYPE_DEFAULT,
+        topLevelPrebuildInfo.ScratchDataSizeInBytes,
+        &m_topLevelAS->scratch,
+        D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+        D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS,
+        nullptr,
+        L"ScratchResource"
+    );
+
+    // Allocate resources for acceleration structures.
+    {
+        D3D12_HEAP_TYPE heapType = D3D12_HEAP_TYPE_DEFAULT;
+        D3D12_RESOURCE_STATES initialResourceState = D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+        D3D12_RESOURCE_FLAGS resourceFlags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
+        AllocateBuffer(
+            device,
+            heapType,
+            topLevelPrebuildInfo.ResultDataMaxSizeInBytes,
+            &m_topLevelAS->accelerationStructure,
+            initialResourceState,
+            resourceFlags,
+            nullptr,
+            L"TopLevelAccelerationStructure"
+        );
     }
 
     // Top-level AS desc
     {
-        topLevelBuildDesc.DestAccelerationStructureData = topLevelAS->GetGPUVirtualAddress();
-        topLevelInputs.InstanceDescs = instanceDescsResource->GetGPUVirtualAddress();
-        topLevelBuildDesc.ScratchAccelerationStructureData = scratch->GetGPUVirtualAddress();
+        topLevelBuildDesc.DestAccelerationStructureData = m_topLevelAS->accelerationStructure->GetGPUVirtualAddress();
+        topLevelInputs.InstanceDescs = m_topLevelAS->instanceDesc->GetGPUVirtualAddress();
+        topLevelBuildDesc.ScratchAccelerationStructureData = m_topLevelAS->scratch->GetGPUVirtualAddress();
     }
 
     // Build acceleration structure.
     m_dxrCommandList->BuildRaytracingAccelerationStructure(&topLevelBuildDesc, 0, nullptr);
 
-    AccelerationStructureBuffers topLevelASBuffers;
-    topLevelASBuffers.accelerationStructure = topLevelAS;
-    topLevelASBuffers.instanceDesc = instanceDescsResource;
-    topLevelASBuffers.scratch = scratch;
-    topLevelASBuffers.ResultDataMaxSizeInBytes = topLevelPrebuildInfo.ResultDataMaxSizeInBytes;
-    return topLevelASBuffers;
+    m_topLevelAS->ResultDataMaxSizeInBytes = topLevelPrebuildInfo.ResultDataMaxSizeInBytes;
+}
+
+void SelectiveSDF::UpdateTopLevelAS()
+{
+    vector<D3D12_GPU_VIRTUAL_ADDRESS> bottomLevelASaddresses;
+    for (auto& blas : m_bottomLevelAS)
+    {
+        bottomLevelASaddresses.push_back(blas->GetGPUVirtualAddress());
+    }
+    UINT topLevelASCount;
+    BuildBottomLevelASInstanceDescs<D3D12_RAYTRACING_INSTANCE_DESC>(bottomLevelASaddresses, topLevelASCount, true);
+
+    // Get required sizes for an acceleration structure.
+    D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC topLevelBuildDesc = {};
+    auto& topLevelInputs = topLevelBuildDesc.Inputs;
+    topLevelInputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_TOP_LEVEL;
+    topLevelInputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+    topLevelInputs.NumDescs = topLevelASCount;
+    topLevelBuildDesc.DestAccelerationStructureData = m_topLevelAS->accelerationStructure->GetGPUVirtualAddress();
+    topLevelInputs.InstanceDescs = m_topLevelAS->instanceDesc->GetGPUVirtualAddress();
+    topLevelBuildDesc.ScratchAccelerationStructureData = m_topLevelAS->scratch->GetGPUVirtualAddress();
+    topLevelInputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE |
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PERFORM_UPDATE;
+    topLevelBuildDesc.SourceAccelerationStructureData = m_topLevelAS->accelerationStructure->GetGPUVirtualAddress();
+
+    m_dxrCommandList->BuildRaytracingAccelerationStructure(&topLevelBuildDesc, 0, nullptr);
 }
 
 void SelectiveSDF::BuildAccelerationStructures()
@@ -840,10 +952,8 @@ void SelectiveSDF::BuildAccelerationStructures()
     commandList->Reset(commandAllocator, nullptr);
 
     // Build bottom-level AS.
-    //const UINT BlasCount = TrianglePrimitive::Count + IntersectionShaderType::TotalPrimitiveCount;
     vector<AccelerationStructureBuffers> bottomLevelAS;
     vector<vector<D3D12_RAYTRACING_GEOMETRY_DESC>> geometryDescs;
-	//geometryDescs.resize(BlasCount);
     {
         BuildGeometryDescsForBottomLevelAS(geometryDescs);
 		bottomLevelAS.resize(geometryDescs.size());
@@ -868,7 +978,11 @@ void SelectiveSDF::BuildAccelerationStructures()
 
 
     // Build top-level AS.
-    AccelerationStructureBuffers topLevelAS = BuildTopLevelAS(bottomLevelAS.data(), BlasCount);
+    BuildTopLevelAS(
+        bottomLevelAS.data(),
+        BlasCount,
+        D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE
+    );
 
     // Kick off acceleration structure construction.
     m_deviceResources->ExecuteCommandList();
@@ -882,7 +996,6 @@ void SelectiveSDF::BuildAccelerationStructures()
     {
         m_bottomLevelAS[i] = bottomLevelAS[i].accelerationStructure;
     }
-    m_topLevelAS = topLevelAS.accelerationStructure;
 }
 
 void SelectiveSDF::CreateConstantBuffers()
@@ -891,6 +1004,19 @@ void SelectiveSDF::CreateConstantBuffers()
     auto frameCount = m_deviceResources->GetBackBufferCount();
 
     m_sceneCB.Create(device, frameCount, L"Scene Constant Buffer");
+    m_sceneCB->sdfInstanceCount = SDFInstanceCount;
+}
+
+void SelectiveSDF::CreateStructuredBuffers()
+{
+    auto device = m_deviceResources->GetD3DDevice();
+    auto frameCount = m_deviceResources->GetBackBufferCount();
+
+    m_sdfObjectsSB.Create(device, SDFInstanceCount, frameCount, L"SDF Objects Structured Buffer");
+
+    /*auto size = m_grid.GetHashTableSize();
+    m_hashTableSB.Create(device, m_grid.GetHashTableSize(), frameCount, L"Hash Table Structured Buffer");
+    m_instanceIndicesSB.Create(device, m_grid.GetInstanceIndicesSize(), frameCount, L"Hash Table Instance Indices Structured Buffer");*/
 }
 
 void SelectiveSDF::BuildShaderTables()
@@ -1028,6 +1154,114 @@ void SelectiveSDF::CreateRaytracingOutputResource()
     m_raytracingOutputResourceUAVGpuDescriptor = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_resourceManager->GetSRVDescriptorHeap()->GetGPUDescriptorHandleForHeapStart(), m_raytracingOutputResourceUAVDescriptorHeapIndex, m_resourceManager->GetSRVDescriptorSize());
 }
 
+//void SelectiveSDF::BuildSpatialHashGrid()
+//{
+//    m_grid.ClearCells();
+//
+//    for (int i = 0; i < m_instances.size(); i++) {
+//        const auto& instance = m_instances[i];
+//
+//        if (m_objects[instance.objectIndex]->GetType() != ObjectType::Hybrid) continue;
+//
+//        // Calculate world-space AABB
+//        float halfSize = 0.6f * instance.scale;  // Your padded size
+//        XMFLOAT3 worldMin = {
+//            instance.position.x - halfSize,
+//            instance.position.y - halfSize,
+//            instance.position.z - halfSize
+//        };
+//        XMFLOAT3 worldMax = {
+//            instance.position.x + halfSize,
+//            instance.position.y + halfSize,
+//            instance.position.z + halfSize
+//        };
+//
+//        // Convert to cell coordinates
+//        auto minCell = m_grid.WorldToCell(worldMin);
+//        auto maxCell = m_grid.WorldToCell(worldMax);
+//
+//        // Insert into all overlapped cells
+//        for (int x = minCell.x; x <= maxCell.x; x++) 
+//        {
+//            for (int y = minCell.y; y <= maxCell.y; y++) 
+//            {
+//                for (int z = minCell.z; z <= maxCell.z; z++) 
+//                {
+//                    m_grid.AddCellData(x, y, z, i);
+//                }
+//            }
+//        }
+//    }
+//
+//    // build hash table and indices flat array
+//    m_grid.Build();
+//}
+
+void SelectiveSDF::BuildSDfBVH()
+{
+    m_bvhBuilder.Build(m_instances, m_instances.size() - SDFInstanceCount);
+}
+
+void SelectiveSDF::CalculateFrameStats()
+{
+    static int frameCnt = 0;
+    static double prevTime = 0.0f;
+    double totalTime = m_timer.GetTotalSeconds();
+
+    frameCnt++;
+
+    // Compute averages over one second period.
+    if ((totalTime - prevTime) >= 1.0f)
+    {
+        float diff = static_cast<float>(totalTime - prevTime);
+        float fps = static_cast<float>(frameCnt) / diff; // Normalize to an exact second.
+
+        frameCnt = 0;
+        prevTime = totalTime;
+
+        wstringstream windowText;
+        windowText << setprecision(2) << fixed  << L"    fps: " << fps;
+        SetCustomWindowText(windowText.str().c_str());
+    }
+}
+
+void SelectiveSDF::BuildSDFObjectsData()
+{
+    auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
+
+    UINT instanceIndex, textureIndex = 0;
+    for (UINT i = 0; i < SDFInstanceCount; i++)
+    {
+        instanceIndex = m_instances.size() - SDFInstanceCount + i;
+        auto& instance = m_instances[instanceIndex];
+        auto& object = m_objects[instance.objectIndex];
+        if (object->GetType() != ObjectType::Hybrid)
+        {
+            throw runtime_error("Instance insertion order is messed up!");
+        }
+
+        auto hybridObject = static_cast<HybridObject*>(object.get());
+
+        auto& sdfObject = m_sdfObjectsSB[i];
+        sdfObject.world = instance.CalculateTransform();
+        sdfObject.worldI = XMMatrixInverse(nullptr, instance.CalculateTransform());
+        sdfObject.scale = instance.scale;
+        sdfObject.sdfPrimitiveType = hybridObject->GetSDFPrimitiveType();
+
+        if (sdfObject.sdfPrimitiveType == SDFPrimitive::AModel)
+        {
+            sdfObject.sdfTextureIndex = textureIndex;
+
+            if (i < SDFInstanceCount - 1 && m_instances[instanceIndex + 1].objectIndex > instance.objectIndex)
+            {
+                textureIndex++;
+            }
+        }
+
+        sdfObject.instanceIndex = instanceIndex;
+    }
+}
+
 void SelectiveSDF::UpdateCameraMatrices()
 {
     auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
@@ -1035,3 +1269,34 @@ void SelectiveSDF::UpdateCameraMatrices()
 	m_sceneCB->viewI = XMMatrixInverse(nullptr, m_camera.GetViewMatrix());
 	m_sceneCB->projectionI = XMMatrixInverse(nullptr, m_camera.GetProjectionMatrix());
 }
+
+void SelectiveSDF::UpdateSDFObjectsData()
+{
+    auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
+
+    for (UINT i = 0; i < SDFInstanceCount; i++)
+    {
+        auto& sdfObject = m_sdfObjectsSB[i];
+        auto& instanceData = m_instances[sdfObject.instanceIndex];
+        sdfObject.world = instanceData.CalculateTransform();
+        sdfObject.worldI = XMMatrixInverse(nullptr, instanceData.CalculateTransform());
+        sdfObject.scale = instanceData.scale;
+    }
+}
+
+//void SelectiveSDF::BuildHashGridData()
+//{
+//    // copy to staging structured buffers
+//    for (UINT i = 0; i < m_grid.GetHashTableSize(); i++)
+//    {
+//        auto& entry = m_grid.GetHashTable()[i];
+//        m_hashTableSB[i] = { entry.cellPos, entry.indexOffset, entry.count, entry.occupied };
+//    }
+//    for (UINT i = 0; i < m_grid.GetInstanceIndicesSize(); i++)
+//    {
+//        m_instanceIndicesSB[i] = {m_grid.GetInstanceIndices()[i]};
+//    }
+//
+//    m_sceneCB->cellSize = m_grid.CellSize;
+//    m_sceneCB->hashTableSize = m_grid.GetHashTableSize();
+//}

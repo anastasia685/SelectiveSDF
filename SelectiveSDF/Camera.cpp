@@ -6,7 +6,7 @@ void Camera::Initialize(float aspectRatio, float fov)
 	m_aspectRatio = aspectRatio;
 	m_fov = fov;
 
-	m_position = XMVectorSet(0, 1, 3, 0);
+	m_position = XMVectorSet(0, 0.6, 3.5, 0);
 
 	XMVECTOR dir = XMVector3Normalize(XMVectorSubtract(XMVectorZero(), m_position)); // forward vector - position vector
 

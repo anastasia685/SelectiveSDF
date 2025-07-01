@@ -1,13 +1,16 @@
 #pragma once
 #include "Object.h"
+#include "RaytracingHlslCompat.h"
 
 using namespace std;
 
 class HybridObject : public Object
 {
 	public:
-		HybridObject(UINT hitGroupIndex = 1) : Object(ObjectType::Hybrid), m_hitGroupIndex(hitGroupIndex) {};
+		HybridObject(SDFPrimitive::Enum sdfPrimitiveType = SDFPrimitive::Enum::Box, UINT hitGroupIndex = 1) : 
+			Object(ObjectType::Hybrid), m_sdfPrimitiveType(sdfPrimitiveType), m_hitGroupIndex(hitGroupIndex) {};
 
+		SDFPrimitive::Enum GetSDFPrimitiveType() const { return m_sdfPrimitiveType; }
 		UINT GetHitGroupIndex() const { return m_hitGroupIndex; }
 		UINT GetAAbbCount() const { return m_aabbCount; }
 		BufferHelper::D3DBuffer& GetAABBBuffer() { return m_aabbBuffer; };
@@ -37,6 +40,7 @@ class HybridObject : public Object
 protected:
 	UINT m_hitGroupIndex;
 	BufferHelper::D3DBuffer m_aabbBuffer;
+	SDFPrimitive::Enum m_sdfPrimitiveType;
 
 	UINT m_aabbCount = 0; // number of AABBs in the buffer, used for procedural geometry
 

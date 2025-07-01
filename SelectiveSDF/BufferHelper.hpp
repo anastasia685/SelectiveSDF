@@ -18,12 +18,12 @@ namespace ConstantBufferTypes
     {
         XMMATRIX viewI;
         XMMATRIX projectionI;
+        UINT sdfInstanceCount;
     };
 
     struct ObjectConstantBuffer
     {
         XMMATRIX worldI;
-        XMFLOAT3 scale;
     };
 }
 

@@ -104,6 +104,7 @@
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir);util;external_deps/inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -123,6 +124,7 @@
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(ProjectDir);util;external_deps/inc;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PrecompiledHeader>Use</PrecompiledHeader>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
@@ -136,6 +138,7 @@
     <ClInclude Include="AModel.h" />
     <ClInclude Include="Box.h" />
     <ClInclude Include="BufferHelper.hpp" />
+    <ClInclude Include="BVHBuilder.hpp" />
     <ClInclude Include="Camera.h" />
     <ClInclude Include="ConstantBuffer.hpp" />
     <ClInclude Include="FPCamera.h" />
@@ -146,6 +149,8 @@
     <ClInclude Include="ResourceManager.h" />
     <ClInclude Include="SceneDefines.h" />
     <ClInclude Include="SelectiveSDF.h" />
+    <ClInclude Include="SpatialHashGrid.hpp" />
+    <ClInclude Include="Sphere.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="DXRaytracingHelper.h" />
     <ClInclude Include="StructuredBuffer.hpp" />
@@ -163,6 +168,7 @@
     <ClCompile Include="Plane.cpp" />
     <ClCompile Include="ResourceManager.cpp" />
     <ClCompile Include="SelectiveSDF.cpp" />
+    <ClCompile Include="Sphere.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Release|x64'">Create</PrecompiledHeader>

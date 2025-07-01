@@ -1,7 +1,7 @@
 #include "Common.hlsl"
 
 RWTexture2D<float4> g_renderTarget : register(u0);
-RaytracingAccelerationStructure g_scene : register(t0, space0);
+RaytracingAccelerationStructure g_scene : register(t0);
 ConstantBuffer<SceneConstantBuffer> g_sceneCB : register(b0);
 
 
@@ -18,6 +18,32 @@ Ray GenerateCameraRay(uint2 launchIndex, float4x4 viewI, float4x4 projectionI)
     ray.direction = mul(viewI, float4(target.xyz, 0));
 
     return ray;
+}
+float4 TraceRadianceRay(Ray ray, uint currentRayRecursionDepth, RaytracingAccelerationStructure g_scene)
+{
+    if (currentRayRecursionDepth >= MAX_RAY_RECURSION_DEPTH)
+    {
+        return float4(0, 0, 0, 0);
+    }
+
+    // Set the ray's extents.
+    RayDesc rayDesc;
+    rayDesc.Origin = ray.origin;
+    rayDesc.Direction = ray.direction;
+    // Set TMin to a zero value to avoid aliasing artifacts along contact areas.
+    // Note: make sure to enable face culling so as to avoid surface face fighting.
+    rayDesc.TMin = 0;
+    rayDesc.TMax = 10000;
+    RayPayload rayPayload = { float4(0, 0, 0, 0), currentRayRecursionDepth + 1 };
+    TraceRay(g_scene,
+        RAY_FLAG_NONE,
+        0x01 | 0x02,
+        0,
+        0,
+        0,
+        rayDesc, rayPayload);
+
+    return rayPayload.color;
 }
 
 [shader("raygeneration")]

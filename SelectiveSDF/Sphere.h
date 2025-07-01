@@ -4,10 +4,10 @@
 
 using namespace DirectX;
 
-class Box : public HybridObject
+class Sphere : public HybridObject
 {
 public:
-	Box() : HybridObject(SDFPrimitive::Enum::Box, 1) {};
+	Sphere() : HybridObject(SDFPrimitive::Enum::Sphere, 1) {};
 
 protected:
 	virtual void BuildTriangleGeometry(ID3D12Device* device, vector<Index>& indices, vector<Vertex>& vertices) override;

@@ -17,21 +17,19 @@ enum ObjectType {
 	//SDF only?
 };
 
-struct InstanceData
+struct ObjectInstance
 {
+	UINT objectIndex;
+
 	XMFLOAT3 position;
 	XMFLOAT3 rotation;
-	XMFLOAT3 scale;
+	//XMFLOAT3 scale;
+	float scale; // only allow uniform scaling for now
 
 	XMMATRIX CalculateTransform() const
 	{
-		return XMMatrixScaling(scale.x, scale.y, scale.z) *
+		return XMMatrixScaling(scale, scale, scale) *
 			XMMatrixRotationRollPitchYaw(rotation.x, rotation.y, rotation.z) *
-			XMMatrixTranslation(position.x, position.y, position.z);
-	}
-	XMMATRIX CalculateAABBTransform() const
-	{
-		return XMMatrixRotationRollPitchYaw(rotation.x, rotation.y, rotation.z) *
 			XMMatrixTranslation(position.x, position.y, position.z);
 	}
 };
@@ -45,21 +43,15 @@ public:
 	ObjectType GetType() const { return m_type; }
 	UINT GetVertexCount() const { return m_vertexCount; }
 	UINT GetIndexCount() const { return m_indexCount; }
-	std::vector<InstanceData>& GetInstanceData() { return m_instanceData; }
 
 	BufferHelper::D3DBuffer& GetIndexBuffer() { return m_indexBuffer; };
 	BufferHelper::D3DBuffer& GetVertexBuffer() { return m_vertexBuffer; };
 
 	virtual void BuildGeometry(ID3D12Device* device, ID3D12GraphicsCommandList* commandList) = 0; // make child classes implement vertex/index array building
-	void ReleaseStagingBuffers()
+	virtual void ReleaseStagingBuffers()
 	{
 		m_stagingIndexBuffer.Reset();
 		m_stagingVertexBuffer.Reset();
-	}
-
-	void AddInstanceData(XMFLOAT3 position, XMFLOAT3 rotation = XMFLOAT3(0,0,0), XMFLOAT3 scale = XMFLOAT3(1,1,1))
-	{
-		m_instanceData.push_back({position, rotation, scale});
 	}
 
 
@@ -68,8 +60,6 @@ protected:
 	UINT m_indexCount = 0;
 
 	ObjectType m_type;
-
-	std::vector<InstanceData> m_instanceData; // used for instancing
 
 	BufferHelper::D3DBuffer m_indexBuffer;
 	BufferHelper::D3DBuffer m_vertexBuffer;

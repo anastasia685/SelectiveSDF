@@ -9,6 +9,10 @@ namespace GlobalRootSignature {
             AccelerationStructure,
             SceneConstant,
             VertexBuffers,
+            SDFTextures,
+            SDFObjectsData,
+            HashTable,
+            InstanceIndices,
             Count
         };
     }
@@ -75,4 +79,9 @@ namespace RayType {
     };
 }
 
-namespace IntersectionShaderType = SDFPrimitive;
+namespace IntersectionShaderType {
+    enum Enum {
+        SDFPrimitive = 0,
+        Count
+    };
+}

@@ -1,23 +1,8 @@
-//*********************************************************
-//
-// Copyright (c) Microsoft. All rights reserved.
-// This code is licensed under the MIT License (MIT).
-// THIS CODE IS PROVIDED *AS IS* WITHOUT WARRANTY OF
-// ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING ANY
-// IMPLIED WARRANTIES OF FITNESS FOR A PARTICULAR
-// PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.
-//
-//*********************************************************
-
 #pragma once
 
 #include <dxcapi.h>
 #include <fstream>
 
-// Note that while ComPtr is used to manage the lifetime of resources on the CPU,
-// it has no understanding of the lifetime of resources on the GPU. Apps must account
-// for the GPU lifetime of resources to avoid destroying objects that may still be
-// referenced by the GPU.
 using Microsoft::WRL::ComPtr;
 
 class HrException : public std::runtime_error
@@ -166,35 +151,6 @@ inline UINT CalculateConstantBufferByteSize(UINT byteSize)
     return Align(byteSize, D3D12_CONSTANT_BUFFER_DATA_PLACEMENT_ALIGNMENT);
 }
 
-#ifdef D3D_COMPILE_STANDARD_FILE_INCLUDE
-inline Microsoft::WRL::ComPtr<ID3DBlob> CompileShader(
-    const std::wstring& filename,
-    const D3D_SHADER_MACRO* defines,
-    const std::string& entrypoint,
-    const std::string& target)
-{
-    UINT compileFlags = 0;
-#if defined(_DEBUG) || defined(DBG)
-    compileFlags = D3DCOMPILE_DEBUG | D3DCOMPILE_SKIP_OPTIMIZATION;
-#endif
-
-    HRESULT hr;
-
-    Microsoft::WRL::ComPtr<ID3DBlob> byteCode = nullptr;
-    Microsoft::WRL::ComPtr<ID3DBlob> errors;
-    hr = D3DCompileFromFile(filename.c_str(), defines, D3D_COMPILE_STANDARD_FILE_INCLUDE,
-        entrypoint.c_str(), target.c_str(), compileFlags, 0, &byteCode, &errors);
-
-    if (errors != nullptr)
-    {
-        OutputDebugStringA((char*)errors->GetBufferPointer());
-    }
-    ThrowIfFailed(hr);
-
-    return byteCode;
-}
-#endif
-
 // Resets all elements in a ComPtr array.
 template<class T>
 void ResetComPtrArray(T* comPtrArray)
@@ -249,13 +205,19 @@ inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName)
     ThrowIfFailed(pLibrary->CreateBlobWithEncodingFromPinned(
         (LPBYTE)sShader.c_str(), (uint32_t)sShader.size(), 0, &pTextBlob));
 
-    // Define debug compile arguments
-    std::vector<LPCWSTR> arguments = {
+    LPCWSTR* arguments = nullptr;
+    UINT32 argumentsSize = 0;
+
+#ifdef DEBUG
+    std::vector<LPCWSTR> argList = {
         L"-Zi",            // Debug info
         L"-Od",            // Disable optimizations
         L"-Qembed_debug",  // Embed debug info in the .cso
         L"-D", L"DEBUG"    // Optional: define DEBUG macro
     };
+    arguments = argList.data();
+    argumentsSize = static_cast<UINT32>(argList.size());
+#endif
 
     // Compile
     IDxcOperationResult* pResult;
@@ -263,9 +225,9 @@ inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName)
         pTextBlob, 
         fileName, 
         L"", 
-        L"lib_6_3", 
-        arguments.data(),
-        static_cast<UINT32>(arguments.size()),
+        L"lib_6_5", 
+        arguments,
+        argumentsSize,
         nullptr, 
         0,
         dxcIncludeHandler, 

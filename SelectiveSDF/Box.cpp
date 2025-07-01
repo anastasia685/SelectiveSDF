@@ -73,6 +73,6 @@ void Box::BuildAABBs(ID3D12Device* device, vector<D3D12_RAYTRACING_AABB>& aabbs)
 	m_aabbCount = 1;
 
 	aabbs.push_back(
-		{ -0.5f, -0.5f, -0.5f, 0.5f,  0.5f,  0.5f }
+		{ -0.6f, -0.6f, -0.6f, 0.6f,  0.6f,  0.6f }
 	);
 }

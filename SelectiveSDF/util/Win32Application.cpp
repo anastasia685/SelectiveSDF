@@ -1,14 +1,3 @@
-//*********************************************************
-//
-// Copyright (c) Microsoft. All rights reserved.
-// This code is licensed under the MIT License (MIT).
-// THIS CODE IS PROVIDED *AS IS* WITHOUT WARRANTY OF
-// ANY KIND, EITHER EXPRESS OR IMPLIED, INCLUDING ANY
-// IMPLIED WARRANTIES OF FITNESS FOR A PARTICULAR
-// PURPOSE, MERCHANTABILITY, OR NON-INFRINGEMENT.
-//
-//*********************************************************
-
 #include "stdafx.h"
 #include "Win32Application.h"
 #include "DXSampleHelper.h"
@@ -41,7 +30,7 @@ int Win32Application::Run(DXSample* pSample, HINSTANCE hInstance, int nCmdShow)
         RECT windowRect = { 0, 0, static_cast<LONG>(pSample->GetWidth()), static_cast<LONG>(pSample->GetHeight()) };
         AdjustWindowRect(&windowRect, WS_OVERLAPPEDWINDOW, FALSE);
 
-        // Create the window and store a handle to it.
+        // Create the window and store a handle to it
         m_hwnd = CreateWindow(
             windowClass.lpszClassName,
             pSample->GetTitle(),
@@ -50,12 +39,12 @@ int Win32Application::Run(DXSample* pSample, HINSTANCE hInstance, int nCmdShow)
             CW_USEDEFAULT,
             windowRect.right - windowRect.left,
             windowRect.bottom - windowRect.top,
-            nullptr,        // We have no parent window.
-            nullptr,        // We aren't using menus.
+            nullptr,
+            nullptr,
             hInstance,
             pSample);
 
-        // Initialize the sample. OnInit is defined in each child-implementation of DXSample.
+        // Initialize the sample. OnInit is defined in each child-implementation of DXSample
         pSample->OnInit();
 
         ShowWindow(m_hwnd, nCmdShow);

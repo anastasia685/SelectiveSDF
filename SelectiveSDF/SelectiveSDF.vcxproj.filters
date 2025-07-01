@@ -39,14 +39,14 @@
     <Filter Include="Header Files\System\BufferManagement">
       <UniqueIdentifier>{3dc4a6dc-8263-41cc-ac14-18b0e1a83147}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Source Files\System">
-      <UniqueIdentifier>{739e943c-a436-440f-8a01-40d1eca77134}</UniqueIdentifier>
-    </Filter>
     <Filter Include="Header Files\Scene\Geometry">
       <UniqueIdentifier>{16d50305-7849-4ea1-a552-418228c985ad}</UniqueIdentifier>
     </Filter>
     <Filter Include="Source Files\Scene\Geometry">
       <UniqueIdentifier>{f299193c-ac33-4a57-9240-037a2c020d59}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\System">
+      <UniqueIdentifier>{739e943c-a436-440f-8a01-40d1eca77134}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
@@ -113,6 +113,15 @@
     <ClInclude Include="Box.h">
       <Filter>Header Files\Scene\Geometry</Filter>
     </ClInclude>
+    <ClInclude Include="SpatialHashGrid.hpp">
+      <Filter>Header Files\System</Filter>
+    </ClInclude>
+    <ClInclude Include="BVHBuilder.hpp">
+      <Filter>Header Files\System</Filter>
+    </ClInclude>
+    <ClInclude Include="Sphere.h">
+      <Filter>Header Files\Scene\Geometry</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -146,6 +155,9 @@
       <Filter>Source Files\Scene\Geometry</Filter>
     </ClCompile>
     <ClCompile Include="Box.cpp">
+      <Filter>Source Files\Scene\Geometry</Filter>
+    </ClCompile>
+    <ClCompile Include="Sphere.cpp">
       <Filter>Source Files\Scene\Geometry</Filter>
     </ClCompile>
   </ItemGroup>

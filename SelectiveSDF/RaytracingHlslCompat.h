@@ -1,9 +1,6 @@
-#ifndef RAYTRACINGHLSLCOMPAT_H
-#define RAYTRACINGHLSLCOMPAT_H
+#pragma once
 
 using namespace DirectX;
-
-#endif
 
 #define MAX_RAY_RECURSION_DEPTH 1
 
@@ -18,10 +15,33 @@ namespace TrianglePrimitive {
 namespace SDFPrimitive {
     enum Enum {
         Box = 0,
-        AModel,
-        Count
+        Sphere,
+        AModel
     };
-}
+};
+
+struct SDFObjectData {
+    XMMATRIX world;
+    XMMATRIX worldI;
+    float scale;
+    SDFPrimitive::Enum sdfPrimitiveType; // why not
+    INT sdfTextureIndex = -1; // only amodel types will have valid texture indices
+    UINT instanceIndex;
+};
+struct HashTableEntry
+{
+    XMINT3 cellPos;
+    UINT indexOffset;
+    UINT count;
+    UINT occupied;
+    XMFLOAT2 padding;
+};
+struct InstanceIndex
+{
+    INT index;
+    XMFLOAT3 padding;
+};
+
 
 struct RayPayload
 {
