@@ -18,6 +18,7 @@ namespace ConstantBufferTypes
     {
         XMMATRIX viewI;
         XMMATRIX projectionI;
+        UINT triangleInstanceCount;
         UINT sdfInstanceCount;
     };
 

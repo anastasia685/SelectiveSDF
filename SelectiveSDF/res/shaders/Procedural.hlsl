@@ -247,12 +247,11 @@ void Intersection_SDF()
             attr.normal = sdfNormal; // world space normal
             //ReportHit(t, 0, attr);
             
-            
             RayDesc rayDesc;
             rayDesc.Origin = WorldRayOrigin();
             rayDesc.Direction = WorldRayDirection();
             rayDesc.TMin = tEntry;
-            rayDesc.TMax = tExit;
+            rayDesc.TMax = 100; //TODO: find out why tExit is not working properly
     
     
             RayQuery <RAY_FLAG_FORCE_OPAQUE> q;
@@ -282,10 +281,15 @@ void Intersection_SDF()
                 uint instanceIndex = q.CommittedInstanceID();
                 
                 Triangle polyTri = TriangleData(q.CommittedInstanceID(), q.CommittedPrimitiveIndex(), g_indexVertexBuffers);
+                
+                
+                // Transform the hit point to object space of that triangle instance
+                float3 worldHitPoint = rayDesc.Origin + rayDesc.Direction * polyT;
+                float3 objectHitPoint = mul(g_sdfObjectsData[instanceIndex - g_sceneCB.triangleInstanceCount].worldI, float4(worldHitPoint, 1.0)).xyz;
             
                 // Calculate hit point in object space
-                float3 hitPoint = ObjectRayOrigin() + ObjectRayDirection() * polyT;
-                float3 bary = Barycentrics(polyTri, hitPoint);
+                //float3 hitPoint = ObjectRayOrigin() + ObjectRayDirection() * polyT;
+                float3 bary = Barycentrics(polyTri, objectHitPoint);
                 
                 float3 polyNormal = normalize(polyTri.v0.normal * bary.x + polyTri.v1.normal * bary.y + polyTri.v2.normal * bary.z);
                 

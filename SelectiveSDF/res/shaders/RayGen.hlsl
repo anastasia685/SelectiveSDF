@@ -36,7 +36,7 @@ float4 TraceRadianceRay(Ray ray, uint currentRayRecursionDepth, RaytracingAccele
     rayDesc.TMax = 10000;
     RayPayload rayPayload = { float4(0, 0, 0, 0), currentRayRecursionDepth + 1 };
     TraceRay(g_scene,
-        RAY_FLAG_NONE,
+        RAY_FLAG_FORCE_OPAQUE,
         0x01 | 0x02,
         0,
         0,

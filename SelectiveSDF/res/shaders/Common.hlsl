@@ -34,6 +34,7 @@ struct SceneConstantBuffer
 {
     float4x4 viewI;
     float4x4 projectionI;
+    uint triangleInstanceCount;
     uint sdfInstanceCount;
 };
 struct SDFObjectData

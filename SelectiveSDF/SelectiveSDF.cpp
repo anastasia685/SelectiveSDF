@@ -1004,6 +1004,7 @@ void SelectiveSDF::CreateConstantBuffers()
     auto frameCount = m_deviceResources->GetBackBufferCount();
 
     m_sceneCB.Create(device, frameCount, L"Scene Constant Buffer");
+    m_sceneCB->triangleInstanceCount = m_instances.size() - SDFInstanceCount;
     m_sceneCB->sdfInstanceCount = SDFInstanceCount;
 }
 
