@@ -20,13 +20,25 @@ namespace SDFPrimitive {
     };
 };
 
-struct SDFObjectData {
+struct SDFInstanceData {
     XMMATRIX world;
     XMMATRIX worldI;
     float scale;
-    SDFPrimitive::Enum sdfPrimitiveType; // why not
-    INT sdfTextureIndex = -1; // only amodel types will have valid texture indices
-    UINT instanceIndex;
+	UINT objectIndex; // for static sdf *object* data like primitive type, etc.
+	UINT instanceIndex; // Index in the m_instances vector
+    UINT brickStart;
+    //SDFPrimitive::Enum sdfPrimitiveType;
+    //INT sdfTextureIndex = -1; // only amodel types will have valid texture indices
+    //UINT instanceIndex;
+};
+
+struct SDFObjectData
+{
+    SDFPrimitive::Enum primitiveType;
+	UINT textureIndex = -1; // Only valid for AModel type
+	UINT firstBrickIndex = 0; // First brick index in the atlas
+	//UINT brickCount = 0; // Number of bricks in the atlas
+    float padding;
 };
 struct HashTableEntry
 {
@@ -36,9 +48,21 @@ struct HashTableEntry
     UINT occupied;
     XMFLOAT2 padding;
 };
+struct BVHNodeGPU
+{
+    XMFLOAT3 min;
+    UINT leftChild; // or ~0 for leaf
+
+    XMFLOAT3 max;
+    UINT rightChild; // or ~0 for leaf
+
+    UINT firstInstance;
+    UINT instanceCount;
+    UINT padding[2]; // pad to 64 bytes
+};
 struct InstanceIndex
 {
-    INT index;
+    UINT index;
     XMFLOAT3 padding;
 };
 

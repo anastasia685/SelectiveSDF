@@ -2,6 +2,25 @@
 #include "RayTracingHlslCompat.h"
 #include "BufferHelper.hpp"
 
+namespace Compute {
+    namespace GlobalRootSignature {
+        namespace Slot {
+            enum Enum {
+                //OutputAABBs = 0,
+                OutputBrickTextures = 0,
+                //CandidateVoxels,
+                CandidateBricks,
+				SDFObjectsData,
+				SDFInstancesData,
+                SDFTextures,
+				ComputeConstant,
+                Count
+            };
+        }
+    }
+}
+
+
 namespace GlobalRootSignature {
     namespace Slot {
         enum Enum {
@@ -9,9 +28,20 @@ namespace GlobalRootSignature {
             AccelerationStructure,
             SceneConstant,
             VertexBuffers,
+            SDFVoxels,
+            //SDFLeafAtlas,
+            //SDFLeafNodes,
+            //SDFInternal1Nodes,
+            //SDFInternal2Nodes,
+            //SDFRootNodes,
+            SDFBricks,
             SDFTextures,
+            SDFBrickTextures,
+            //BrickAtlas,
             SDFObjectsData,
-            HashTable,
+            SDFInstancesData,
+            //BrickTable,
+            BVH,
             InstanceIndices,
             Count
         };

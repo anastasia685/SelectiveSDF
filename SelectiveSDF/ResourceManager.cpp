@@ -67,9 +67,9 @@ UINT ResourceManager::CreateBufferSRV(ID3D12Device* device, BufferHelper::D3DBuf
         srvDesc.Buffer.Flags = D3D12_BUFFER_SRV_FLAG_NONE;
         srvDesc.Buffer.StructureByteStride = elementSize;
     }
-    UINT descriptorIndex = AllocateDescriptor(&buffer->cpuDescriptorHandle);
-    device->CreateShaderResourceView(buffer->resource.Get(), &srvDesc, buffer->cpuDescriptorHandle);
-    buffer->gpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
+    UINT descriptorIndex = AllocateDescriptor(&buffer->srvCpuDescriptorHandle);
+    device->CreateShaderResourceView(buffer->resource.Get(), &srvDesc, buffer->srvCpuDescriptorHandle);
+    buffer->srvGpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
     return descriptorIndex;
 }
 
@@ -82,8 +82,41 @@ UINT ResourceManager::CreateTexture3DSRV(ID3D12Device* device, BufferHelper::D3D
     srvDesc.Texture3D.MipLevels = 1;  // All mip levels
     srvDesc.Texture3D.MostDetailedMip = 0;
 
-    UINT descriptorIndex = AllocateDescriptor(&buffer->cpuDescriptorHandle);
-    device->CreateShaderResourceView(buffer->resource.Get(), &srvDesc, buffer->cpuDescriptorHandle);
-    buffer->gpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
+    UINT descriptorIndex = AllocateDescriptor(&buffer->srvCpuDescriptorHandle);
+    device->CreateShaderResourceView(buffer->resource.Get(), &srvDesc, buffer->srvCpuDescriptorHandle);
+    buffer->srvGpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
+    return descriptorIndex;
+}
+
+UINT ResourceManager::CreateTexture2DArraySRV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer, UINT arraySize, DXGI_FORMAT format)
+{
+    D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+    srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+    srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+    srvDesc.Format = format;
+    srvDesc.Texture3D.MipLevels = 1;  // All mip levels
+    srvDesc.Texture3D.MostDetailedMip = 0;
+    srvDesc.Texture2DArray.FirstArraySlice = 0;
+    srvDesc.Texture2DArray.ArraySize = arraySize;
+
+    UINT descriptorIndex = AllocateDescriptor(&buffer->srvCpuDescriptorHandle);
+    device->CreateShaderResourceView(buffer->resource.Get(), &srvDesc, buffer->srvCpuDescriptorHandle);
+    buffer->srvGpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
+    return descriptorIndex;
+}
+
+UINT ResourceManager::CreateTexture2DArrayUAV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer, UINT arraySize, DXGI_FORMAT format)
+{
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE2DARRAY;
+    uavDesc.Format = format;
+    uavDesc.Texture2DArray.MipSlice = 0;
+    uavDesc.Texture2DArray.FirstArraySlice = 0;
+    uavDesc.Texture2DArray.ArraySize = arraySize;
+    uavDesc.Texture2DArray.PlaneSlice = 0;
+
+    UINT descriptorIndex = AllocateDescriptor(&buffer->uavCpuDescriptorHandle);
+    device->CreateUnorderedAccessView(buffer->resource.Get(), nullptr, &uavDesc, buffer->uavCpuDescriptorHandle);
+    buffer->uavGpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
     return descriptorIndex;
 }

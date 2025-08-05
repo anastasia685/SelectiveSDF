@@ -175,7 +175,7 @@ void ResetUniquePtrArray(T* uniquePtrArray)
 //--------------------------------------------------------------------------------------------------
 // Compile a HLSL file into a DXIL library
 //
-inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName)
+inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName, LPCWSTR entryPoint = L"", LPCWSTR targetProfile = L"lib_6_5")
 {
     static IDxcCompiler* pCompiler = nullptr;
     static IDxcLibrary* pLibrary = nullptr;
@@ -208,7 +208,7 @@ inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName)
     LPCWSTR* arguments = nullptr;
     UINT32 argumentsSize = 0;
 
-#ifdef DEBUG
+//#ifdef DEBUG
     std::vector<LPCWSTR> argList = {
         L"-Zi",            // Debug info
         L"-Od",            // Disable optimizations
@@ -217,15 +217,15 @@ inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName)
     };
     arguments = argList.data();
     argumentsSize = static_cast<UINT32>(argList.size());
-#endif
+//#endif
 
     // Compile
     IDxcOperationResult* pResult;
     ThrowIfFailed(pCompiler->Compile(
         pTextBlob, 
         fileName, 
-        L"", 
-        L"lib_6_5", 
+        entryPoint, 
+        targetProfile, 
         arguments,
         argumentsSize,
         nullptr, 

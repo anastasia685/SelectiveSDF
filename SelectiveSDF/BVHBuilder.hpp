@@ -120,7 +120,7 @@ private:
     BoundingBox computeWorldAABB(const ObjectInstance& instance)
     {
         float s = instance.scale;
-        XMFLOAT3 halfExtent = { 0.5f * s, 0.5f * s, 0.5f * s };
+        XMFLOAT3 halfExtent = { 0.5f * s, 0.5f * s, 0.5f * s }; // included padding
 
         BoundingBox box;
         box.min = {

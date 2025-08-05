@@ -10,6 +10,8 @@ public:
 	UINT AllocateDescriptor(D3D12_CPU_DESCRIPTOR_HANDLE* cpuDescriptor, UINT descriptorIndexToUse = UINT_MAX);
     UINT CreateBufferSRV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer, UINT size, UINT stride);
     UINT CreateTexture3DSRV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer);
+    UINT CreateTexture2DArraySRV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer, UINT arraySize, DXGI_FORMAT format = DXGI_FORMAT_R32_FLOAT);
+    UINT CreateTexture2DArrayUAV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer, UINT arraySize, DXGI_FORMAT format = DXGI_FORMAT_R32_FLOAT);
 
 	ID3D12DescriptorHeap* GetSRVDescriptorHeap() const { return m_srvDescriptorHeap.Get(); }
 	UINT GetSRVDescriptorSize() const { return m_srvDescriptorSize; }
@@ -45,26 +47,36 @@ inline void AllocateBuffer(ID3D12Device* pDevice, D3D12_HEAP_TYPE heapType, UINT
         (*ppResource)->Unmap(0, nullptr);
     }
 }
-inline void AllocateTexture(ID3D12Device* pDevice, const DirectX::XMUINT3& resolution, ID3D12Resource** ppResource, D3D12_RESOURCE_STATES initialResourceState = D3D12_RESOURCE_STATE_COPY_DEST)
+inline void AllocateTexture(ID3D12Device* pDevice, const DirectX::XMUINT3& resolution, ID3D12Resource** ppResource, DXGI_FORMAT format = DXGI_FORMAT_R32_FLOAT, D3D12_RESOURCE_DIMENSION dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D, D3D12_RESOURCE_STATES initialResourceState = D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_FLAGS resourceFlags = D3D12_RESOURCE_FLAG_NONE)
 {
 	auto heapProperties = CD3DX12_HEAP_PROPERTIES(D3D12_HEAP_TYPE_DEFAULT);
 
 	D3D12_RESOURCE_DESC textureDesc = {};
 	textureDesc.DepthOrArraySize = resolution.z;
-	textureDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE3D;
-	textureDesc.Format = DXGI_FORMAT_R32_FLOAT;
+	textureDesc.Dimension = dimension;
+	textureDesc.Format = format;
 	textureDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
 	textureDesc.Width = resolution.x;
 	textureDesc.Height = resolution.y;
 	textureDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 	textureDesc.MipLevels = 1;
 	textureDesc.SampleDesc.Count = 1;
+	textureDesc.Flags = resourceFlags;
 
-	ThrowIfFailed(pDevice->CreateCommittedResource(
+	auto hr = pDevice->CreateCommittedResource(
 		&heapProperties,
 		D3D12_HEAP_FLAG_NONE,
 		&textureDesc,
 		initialResourceState,
 		nullptr,
-		IID_PPV_ARGS(ppResource)));
+		IID_PPV_ARGS(ppResource));
+
+
+	/*ThrowIfFailed(pDevice->CreateCommittedResource(
+		&heapProperties,
+		D3D12_HEAP_FLAG_NONE,
+		&textureDesc,
+		initialResourceState,
+		nullptr,
+		IID_PPV_ARGS(ppResource)));*/
 }

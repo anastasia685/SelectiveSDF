@@ -3,7 +3,7 @@
 
 void Sphere::BuildTriangleGeometry(ID3D12Device* device, vector<Index>& indices, vector<Vertex>& vertices)
 {
-    const float radius = 0.5f;
+    const float radius = 0.4f;
     const int segments = 32; // Longitude divisions
     const int rings = 16;    // Latitude divisions
 

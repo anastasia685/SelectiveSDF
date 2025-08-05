@@ -33,7 +33,7 @@ float4 TraceRadianceRay(Ray ray, uint currentRayRecursionDepth, RaytracingAccele
     // Set TMin to a zero value to avoid aliasing artifacts along contact areas.
     // Note: make sure to enable face culling so as to avoid surface face fighting.
     rayDesc.TMin = 0;
-    rayDesc.TMax = 10000;
+    rayDesc.TMax = 1000;
     RayPayload rayPayload = { float4(0, 0, 0, 0), currentRayRecursionDepth + 1 };
     TraceRay(g_scene,
         RAY_FLAG_FORCE_OPAQUE,

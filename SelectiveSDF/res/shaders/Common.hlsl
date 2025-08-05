@@ -34,17 +34,47 @@ struct SceneConstantBuffer
 {
     float4x4 viewI;
     float4x4 projectionI;
+    uint triangleObjectCount;
+    uint sdfObjectCount;
     uint triangleInstanceCount;
     uint sdfInstanceCount;
 };
 struct SDFObjectData
 {
+    int primitiveType;
+    uint textureIndex;
+    uint firstBrickIndex;
+    uint brickCount;
+};
+struct SDFInstanceData
+{
     float4x4 world;
     float4x4 worldI;
     float scale;
-    int sdfPrimitiveType; // why not
-    int sdfTextureIndex;
-    int _instanceIndex;
+    uint objectIndex;
+    uint _instanceIndex;
+    uint brickStart;
+    //int sdfPrimitiveType;
+    //int sdfTextureIndex;
+    //int _instanceIndex;
+};
+struct BrickMeta
+{
+    uint packedCoord;
+    uint instanceIndex;
+    uint sliceStart;
+    uint padding;
+};
+struct SDFBrickData
+{
+    uint3 brickCoord;
+    float padding;
+};
+struct SurfaceVoxel
+{
+    uint x, y, z;
+    uint instanceIndex;
+    //float s000, s100, s010, s110, s001, s101, s011, s111;
 };
 struct HashTableEntry
 {
@@ -54,10 +84,35 @@ struct HashTableEntry
     uint occupied;
     float2 padding;
 };
-struct InstanceIndex
+struct BVHNode
+{
+    float3 min;
+    uint leftChild; // or ~0 for leaf
+
+    float3 max;
+    uint rightChild; // or ~0 for leaf
+
+    uint firstInstance;
+    uint instanceCount;
+    float2 padding; // pad to 64 bytes
+};
+struct NodeInstanceIndex
 {
     int index;
     float3 padding;
+};
+struct LeafNodeData
+{
+    int3 coord;
+    uint sliceIndex;
+    uint bitmask[16];
+};
+struct InternalNodeData
+{
+    int3 coord;
+    uint childMask;
+    uint firstChild;
+    int3 padding;
 };
 
 #define MAX_RAY_RECURSION_DEPTH 1

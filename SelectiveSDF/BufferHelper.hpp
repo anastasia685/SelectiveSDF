@@ -6,8 +6,11 @@ namespace BufferHelper
     struct D3DBuffer
     {
         ComPtr<ID3D12Resource> resource;
-        D3D12_CPU_DESCRIPTOR_HANDLE cpuDescriptorHandle;
-        D3D12_GPU_DESCRIPTOR_HANDLE gpuDescriptorHandle;
+        D3D12_CPU_DESCRIPTOR_HANDLE srvCpuDescriptorHandle;
+        D3D12_GPU_DESCRIPTOR_HANDLE srvGpuDescriptorHandle;
+
+        D3D12_CPU_DESCRIPTOR_HANDLE uavCpuDescriptorHandle;
+        D3D12_GPU_DESCRIPTOR_HANDLE uavGpuDescriptorHandle;
     };
 }
 namespace ConstantBufferTypes
@@ -18,9 +21,21 @@ namespace ConstantBufferTypes
     {
         XMMATRIX viewI;
         XMMATRIX projectionI;
+        UINT triangeObjectCount;
+        UINT sdfObjectCount;
         UINT triangleInstanceCount;
         UINT sdfInstanceCount;
     };
+
+    struct ComputeConstantBuffer
+    {
+		/*UINT candidateVoxelCount;
+        XMFLOAT3 padding;*/
+        UINT triangeObjectCount;
+        UINT sdfObjectCount;
+        UINT triangleInstanceCount;
+        UINT sdfInstanceCount;
+	};
 
     struct ObjectConstantBuffer
     {

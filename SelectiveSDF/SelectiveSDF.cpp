@@ -43,44 +43,50 @@ SelectiveSDF::SelectiveSDF(UINT width, UINT height, std::wstring name) : DXSampl
     unique_ptr<Box> box = make_unique<Box>();
     // box instances
     {
-        m_instances.push_back({ 1, { -1.2, 0, 0 }, { 0, 0, 0 }, 1 });
+        /*m_instances.push_back({ 1, { -0.7, 0, 0 }, { 0, 0, 0 }, 1 });
 
-        SDFInstanceCount += 1;
+        SDFInstanceCount += 1;*/
     }
 
     unique_ptr<Sphere> sphere = make_unique<Sphere>();
     // sphere instances
     {
-        m_instances.push_back({ 2, {  1.2, 0, 0}, {0, 0, 0}, 1 });
+        /*m_instances.push_back({ 1, {  0.7, 0, 0}, {0, 0, 0}, 0.3 });
 
-        SDFInstanceCount += 1;
+        SDFInstanceCount += 1;*/
     }
 
 	unique_ptr<AModel> aModel = make_unique<AModel>("monkey");
     // monkey instances
     {
+        /*m_instances.push_back({ 3, { 0, 0, 0 }, {0, 0, 0}, 1 });
+        SDFInstanceCount += 1;*/
+
+        m_instances.push_back({ 1, { -1.2, 0, 0 }, { 0, 0, 0 }, 1 });
+        m_instances.push_back({ 1, { 0, 0, 0 }, { 0, 0, 0 }, 1 });
+
+        SDFInstanceCount += 2;
+
         /*for (int i = 0; i < 10; i++)
         {
             for (int j = 0; j < 10; j++)
             {
-                m_instances.push_back({ 1, { -5.0f + i * 1.0f, 0, -5.0f + j * 1.0f }, { 0, 0, 0 }, 1 });
+                m_instances.push_back({ 1, { -5.4f + i * 0.7f, 0, -5.4f + j * 0.7f }, { 0, 0, 0 }, 1 });
             }
         }
-        
         SDFInstanceCount += 100;*/
-
-        m_instances.push_back({ 3, { 0, 0, 0 }, {0, 0, 0}, 1 });
-        SDFInstanceCount += 1;
     }
 
 
     m_objects.push_back(move(plane));
-    m_objects.push_back(move(box));
-    m_objects.push_back(move(sphere));
+    //m_objects.push_back(move(box));
+    //m_objects.push_back(move(sphere));
     m_objects.push_back(move(aModel));
+    SDFObjectCount += 1;
+	SDFModelObjectCount += 1; // AModel is a model type
 
     //BuildSpatialHashGrid();
-    //BuildSDfBVH();
+    BuildSDfBVH();
 
 	UpdateForSizeChange(width, height);
 }
@@ -120,12 +126,12 @@ void SelectiveSDF::OnUpdate()
     m_timer.Tick();
     CalculateFrameStats();
 
-    float translationX = sinf(m_timer.GetTotalSeconds() * 0.3) * 2;
-    m_instances[3].position = XMFLOAT3(translationX, 0, 0);
+    float translationX = sinf(m_timer.GetTotalSeconds() * 0.4) * 1.0;
+    m_instances[1].position = XMFLOAT3(translationX, 0, 0);
 
     //TODO: reconstruct camera matrices and update camera cb after implementing camera movement
 
-    UpdateSDFObjectsData();
+    UpdateSDFInstancesData();
 }
 
 void SelectiveSDF::OnRender()
@@ -141,6 +147,8 @@ void SelectiveSDF::OnRender()
     // Begin frame.
     m_deviceResources->Prepare();
 
+
+    Compute();
     Raytrace();
     CopyRaytracingOutputToBackbuffer();
 
@@ -176,23 +184,31 @@ void SelectiveSDF::CreateDeviceDependentResources()
 
     // Create root signatures for the shaders.
     CreateRootSignatures();
+    CreateComputeRootSignatures();
 
     // Create a raytracing pipeline state object which defines the binding of shaders, state and resources to be used during raytracing.
     CreateRaytracingPipelineStateObject();
 
+    CreateComputePipelineStateObject();
+
     // Create a heap for descriptors.
-    m_resourceManager->Initialize(m_deviceResources->GetD3DDevice(), 16);
-
-    // Build geometry to be used in the sample
-    BuildGeometry();
-
-    // Build raytracing acceleration structures from the generated geometry.
-    BuildAccelerationStructures();
+    m_resourceManager->Initialize(m_deviceResources->GetD3DDevice(), 32);
 
     // Create constant buffers for the scene.
     CreateConstantBuffers();
 
     CreateStructuredBuffers();
+
+    // Build geometry to be used in the sample
+    BuildGeometry();
+
+    //BuildBrickAtlas();
+    //_BuildBrickAtlas();
+
+    CreateComputeOutputResource();
+
+    // Build raytracing acceleration structures from the generated geometry.
+    BuildAccelerationStructures();
 
     // Build shader tables, which define shaders and their local root arguments.
     BuildShaderTables();
@@ -214,7 +230,9 @@ void SelectiveSDF::ReleaseDeviceDependentResources()
     m_raytracingGlobalRootSignature.Reset();
 
     m_sceneCB.Release();
-    m_sdfObjectsSB.Release();
+	m_sdfObjectsSB.Release();
+    m_sdfInstancesSB.Release();
+    m_brickTableSB.Release();
 
     /*m_hashTableSB.Release();
     m_instanceIndicesSB.Release();*/
@@ -223,11 +241,16 @@ void SelectiveSDF::ReleaseDeviceDependentResources()
     m_bottomLevelAS.clear();
     //m_topLevelAS.reset();
 
+    m_brickTextureBuffers.clear();
+
     m_raytracingOutput.Reset();
     m_raytracingOutputResourceUAVDescriptorHeapIndex = UINT_MAX;
     m_rayGenShaderTable.Reset();
     m_missShaderTable.Reset();
     m_hitGroupShaderTable.Reset();
+
+    m_computeOutput.Reset();
+	m_computeOutputResourceUAVDescriptorHeapIndex = UINT_MAX;
 
     m_resourceManager.reset();
     m_objects.clear();
@@ -243,6 +266,8 @@ void SelectiveSDF::InitializeScene()
     BuildSDFObjectsData();
 
     //BuildHashGridData();
+
+    BuildBVHData();
 }
 
 void SelectiveSDF::Raytrace()
@@ -250,6 +275,7 @@ void SelectiveSDF::Raytrace()
     auto commandList = m_deviceResources->GetCommandList();
     auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
 
+    //UpdateDynamicBLAS();
     UpdateTopLevelAS();
 
     auto DispatchRays = [&](auto* raytracingCommandList, auto* stateObject, auto* dispatchDesc)
@@ -275,8 +301,19 @@ void SelectiveSDF::Raytrace()
         descriptorSetCommandList->SetDescriptorHeaps(1, &descriptorHeap);
         // Set index and successive vertex buffer decriptor tables.
         commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::OutputView, m_raytracingOutputResourceUAVGpuDescriptor);
-        commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::VertexBuffers, m_objects[0]->GetIndexBuffer().gpuDescriptorHandle);
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::VertexBuffers, m_objects[0]->GetIndexBuffer().srvGpuDescriptorHandle);
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFVoxels, m_sdfVoxelsGpuDescriptor);
+        //commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFLeafAtlas, m_sdfLeafAtlasGpuDescriptor);
+        //commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFLeafNodes, m_sdfLeafNodeGpuDescriptor);
+        //commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFInternal1Nodes, m_sdfInternal1NodeGpuDescriptor);
+        //commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFInternal2Nodes, m_sdfInternal2NodeGpuDescriptor);
+        //commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFRootNodes, m_sdfRootNodeGpuDescriptor);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::SDFBricks, m_brickMetaSB.GpuVirtualAddress(0));
         commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFTextures, m_sdfTexturesGpuDescriptor);
+        commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::SDFBrickTextures, m_sdfBricksSRVGpuDescriptor);
+        //commandList->SetComputeRootDescriptorTable(GlobalRootSignature::Slot::BrickAtlas, m_brickAtlasBuffer.gpuDescriptorHandle);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::SDFObjectsData, m_sdfObjectsSB.GpuVirtualAddress(0));
+        //commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::BrickTable, m_brickTableSB.GpuVirtualAddress(0));
     };
 
     commandList->SetComputeRootSignature(m_raytracingGlobalRootSignature.Get());
@@ -286,9 +323,14 @@ void SelectiveSDF::Raytrace()
 		m_sceneCB.CopyStagingToGpu(frameIndex);
         commandList->SetComputeRootConstantBufferView(GlobalRootSignature::Slot::SceneConstant, m_sceneCB.GpuVirtualAddress(frameIndex));
 
-        m_sdfObjectsSB.CopyStagingToGpu(frameIndex);
-        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::SDFObjectsData, m_sdfObjectsSB.GpuVirtualAddress(frameIndex));
+        //m_sdfInstancesSB.CopyStagingToGpu(frameIndex);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::SDFInstancesData, m_sdfInstancesSB.GpuVirtualAddress(frameIndex));
 
+
+        m_bvhNodesSB.CopyStagingToGpu(frameIndex);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::BVH, m_bvhNodesSB.GpuVirtualAddress(frameIndex));
+        m_instanceIndicesSB.CopyStagingToGpu(frameIndex);
+        commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::InstanceIndices, m_instanceIndicesSB.GpuVirtualAddress(frameIndex));
 
         /*m_hashTableSB.CopyStagingToGpu(frameIndex);
         commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::HashTable, m_hashTableSB.GpuVirtualAddress(frameIndex));
@@ -301,6 +343,57 @@ void SelectiveSDF::Raytrace()
     SetCommonPipelineState(commandList);
     commandList->SetComputeRootShaderResourceView(GlobalRootSignature::Slot::AccelerationStructure, m_topLevelAS->accelerationStructure->GetGPUVirtualAddress());
     DispatchRays(m_dxrCommandList.Get(), m_dxrStateObject.Get(), &dispatchDesc);
+}
+
+void SelectiveSDF::Compute()
+{
+    auto commandList = m_deviceResources->GetCommandList();
+    auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
+
+    auto descriptorHeap = m_resourceManager->GetSRVDescriptorHeap();
+    auto SetCommonPipelineState = [&](auto* descriptorSetCommandList)
+    {
+        descriptorSetCommandList->SetDescriptorHeaps(1, &descriptorHeap);
+        // Set index and successive vertex buffer decriptor tables.
+        //commandList->SetComputeRootDescriptorTable(Compute::GlobalRootSignature::Slot::OutputAABBs, m_computeOutputResourceUAVGpuDescriptor);
+        commandList->SetComputeRootDescriptorTable(Compute::GlobalRootSignature::Slot::OutputBrickTextures, m_sdfBricksUAVGpuDescriptor);
+        //commandList->SetComputeRootShaderResourceView(Compute::GlobalRootSignature::Slot::CandidateVoxels, m_candidateVoxelsSB.GpuVirtualAddress(0));
+        commandList->SetComputeRootShaderResourceView(Compute::GlobalRootSignature::Slot::CandidateBricks, m_brickMetaSB.GpuVirtualAddress(0));
+        commandList->SetComputeRootShaderResourceView(Compute::GlobalRootSignature::Slot::SDFObjectsData, m_sdfObjectsSB.GpuVirtualAddress(0));
+        commandList->SetComputeRootDescriptorTable(Compute::GlobalRootSignature::Slot::SDFTextures, m_sdfTexturesGpuDescriptor);
+        commandList->SetComputeRootConstantBufferView(Compute::GlobalRootSignature::Slot::ComputeConstant, m_computeCB.GpuVirtualAddress(0));
+    };
+
+    commandList->SetComputeRootSignature(m_computeGlobalRootSignature.Get());
+
+    {
+        m_sdfInstancesSB.CopyStagingToGpu(frameIndex);
+        commandList->SetComputeRootShaderResourceView(Compute::GlobalRootSignature::Slot::SDFInstancesData, m_sdfInstancesSB.GpuVirtualAddress(frameIndex));
+    }
+
+    SetCommonPipelineState(commandList);
+
+    // Dispatch compute shader
+    //uint32_t numCandidateVoxels = 100 * 6000;
+    uint32_t threadGroupSize = 1000;
+    //uint32_t numThreadGroups = (m_candidateVoxelCount + threadGroupSize - 1) / threadGroupSize;
+
+    commandList->SetPipelineState(m_computeStateObject.Get());
+    commandList->Dispatch(m_brickMetaSB.NumElementsPerInstance(), 1, 1);
+
+    //D3D12_RESOURCE_BARRIER uavBarrier = CD3DX12_RESOURCE_BARRIER::UAV(m_computeOutput.Get());
+    //commandList->ResourceBarrier(1, &uavBarrier);
+
+    vector<D3D12_RESOURCE_BARRIER> barriers(SDFInstanceCount);
+    for (UINT i = 0; i < SDFInstanceCount; i++)
+    {
+        barriers[i] = CD3DX12_RESOURCE_BARRIER::Transition(
+            m_brickTextureBuffers[i].resource.Get(),
+            D3D12_RESOURCE_STATE_UNORDERED_ACCESS,
+			D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE
+        );
+	}
+    commandList->ResourceBarrier(SDFInstanceCount, barriers.data());
 }
 
 void SelectiveSDF::CopyRaytracingOutputToBackbuffer()
@@ -346,15 +439,30 @@ void SelectiveSDF::CreateRootSignatures()
     // Global Root Signature
     // This is a root signature that is shared across all raytracing shaders invoked during a DispatchRays() call.
     {
-        CD3DX12_DESCRIPTOR_RANGE ranges[3]; // Perfomance TIP: Order from most frequent to least frequent.
+        CD3DX12_DESCRIPTOR_RANGE ranges[8]; // Perfomance TIP: Order from most frequent to least frequent.
         ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);  // 1 output texture
-        ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, m_objects.size() * 2, 4, 0);  // index and vertex buffers per object
-        ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFInstanceCount, 4, 1);
+        ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, m_objects.size() * 2, 7, 0);  // index and vertex buffers per object
+        //ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFInstanceCount, 7, 1);
+        ranges[2].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFModelObjectCount, 7, 1);
+        ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFModelObjectCount, 7, 2);
+        ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFInstanceCount, 7, 3);
+        //ranges[3].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFModelObjectCount, 7, 2);
+        //ranges[4].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFModelObjectCount, 7, 3);
+        //ranges[5].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFModelObjectCount, 7, 4);
+        //ranges[6].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFModelObjectCount, 7, 5);
+        ranges[7].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, 1, 6); // brick atlas texture
 
-        CD3DX12_STATIC_SAMPLER_DESC staticSamplers[1];
+        CD3DX12_STATIC_SAMPLER_DESC staticSamplers[2];
         staticSamplers[0].Init(
             0,
             D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP
+        );
+        staticSamplers[1].Init(
+            1,
+            D3D12_FILTER_MIN_MAG_MIP_POINT,
             D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
             D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
             D3D12_TEXTURE_ADDRESS_MODE_CLAMP
@@ -366,14 +474,25 @@ void SelectiveSDF::CreateRootSignatures()
         rootParameters[GlobalRootSignature::Slot::SceneConstant].InitAsConstantBufferView(0);
         //rootParameters[GlobalRootSignature::Slot::AABBattributeBuffer].InitAsShaderResourceView(3);
         rootParameters[GlobalRootSignature::Slot::VertexBuffers].InitAsDescriptorTable(1, &ranges[1]);
-        rootParameters[GlobalRootSignature::Slot::SDFTextures].InitAsDescriptorTable(1, &ranges[2]);
+        rootParameters[GlobalRootSignature::Slot::SDFVoxels].InitAsDescriptorTable(1, &ranges[2]);
+        //rootParameters[GlobalRootSignature::Slot::SDFLeafAtlas].InitAsDescriptorTable(1, &ranges[2]);
+        rootParameters[GlobalRootSignature::Slot::SDFTextures].InitAsDescriptorTable(1, &ranges[3]);
+        //rootParameters[GlobalRootSignature::Slot::SDFLeafNodes].InitAsDescriptorTable(1, &ranges[3]);
+        rootParameters[GlobalRootSignature::Slot::SDFBrickTextures].InitAsDescriptorTable(1, &ranges[4]);
+        //rootParameters[GlobalRootSignature::Slot::SDFInternal1Nodes].InitAsDescriptorTable(1, &ranges[4]);
+        //rootParameters[GlobalRootSignature::Slot::SDFInternal2Nodes].InitAsDescriptorTable(1, &ranges[5]);
+        //rootParameters[GlobalRootSignature::Slot::SDFRootNodes].InitAsDescriptorTable(1, &ranges[6]);
+        //rootParameters[GlobalRootSignature::Slot::BrickAtlas].InitAsDescriptorTable(1, &ranges[7]);
         rootParameters[GlobalRootSignature::Slot::SDFObjectsData].InitAsShaderResourceView(1);
-        rootParameters[GlobalRootSignature::Slot::HashTable].InitAsShaderResourceView(2);
-        rootParameters[GlobalRootSignature::Slot::InstanceIndices].InitAsShaderResourceView(3);
+        rootParameters[GlobalRootSignature::Slot::SDFInstancesData].InitAsShaderResourceView(2);
+        rootParameters[GlobalRootSignature::Slot::SDFBricks].InitAsShaderResourceView(3);
+        //rootParameters[GlobalRootSignature::Slot::BrickTable].InitAsShaderResourceView(3);
+        rootParameters[GlobalRootSignature::Slot::BVH].InitAsShaderResourceView(4);
+        rootParameters[GlobalRootSignature::Slot::InstanceIndices].InitAsShaderResourceView(5);
 
 
         CD3DX12_ROOT_SIGNATURE_DESC globalRootSignatureDesc(ARRAYSIZE(rootParameters), rootParameters);
-        globalRootSignatureDesc.NumStaticSamplers = 1;
+        globalRootSignatureDesc.NumStaticSamplers = 2;
         globalRootSignatureDesc.pStaticSamplers = staticSamplers;
 
         SerializeAndCreateRaytracingRootSignature(globalRootSignatureDesc, &m_raytracingGlobalRootSignature);
@@ -406,6 +525,45 @@ void SelectiveSDF::CreateRootSignatures()
             localRootSignatureDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_LOCAL_ROOT_SIGNATURE;
             SerializeAndCreateRaytracingRootSignature(localRootSignatureDesc, &m_raytracingLocalRootSignature[LocalRootSignature::Type::AABB]);
         }
+    }
+}
+
+void SelectiveSDF::CreateComputeRootSignatures()
+{
+    auto device = m_deviceResources->GetD3DDevice();
+
+    // Global Root Signature
+    {
+        CD3DX12_DESCRIPTOR_RANGE ranges[2]; // Perfomance TIP: Order from most frequent to least frequent.
+        ranges[0].Init(D3D12_DESCRIPTOR_RANGE_TYPE_UAV, 1, 0);
+        ranges[1].Init(D3D12_DESCRIPTOR_RANGE_TYPE_SRV, SDFModelObjectCount, 3, 0); // sdf textures
+
+
+
+        CD3DX12_STATIC_SAMPLER_DESC staticSamplers[1];
+        staticSamplers[0].Init(
+            0,
+            D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+            D3D12_TEXTURE_ADDRESS_MODE_CLAMP
+        );
+
+        CD3DX12_ROOT_PARAMETER rootParameters[Compute::GlobalRootSignature::Slot::Count];
+        //rootParameters[Compute::GlobalRootSignature::Slot::OutputAABBs].InitAsDescriptorTable(1, &ranges[0]);
+        rootParameters[Compute::GlobalRootSignature::Slot::OutputBrickTextures].InitAsDescriptorTable(1, &ranges[0]);
+        rootParameters[Compute::GlobalRootSignature::Slot::CandidateBricks].InitAsShaderResourceView(0);
+        rootParameters[Compute::GlobalRootSignature::Slot::SDFObjectsData].InitAsShaderResourceView(1);
+        rootParameters[Compute::GlobalRootSignature::Slot::SDFInstancesData].InitAsShaderResourceView(2);
+		rootParameters[Compute::GlobalRootSignature::Slot::SDFTextures].InitAsDescriptorTable(1, &ranges[1]);
+        rootParameters[Compute::GlobalRootSignature::Slot::ComputeConstant].InitAsConstantBufferView(0);
+
+
+        CD3DX12_ROOT_SIGNATURE_DESC globalRootSignatureDesc(ARRAYSIZE(rootParameters), rootParameters);
+        globalRootSignatureDesc.NumStaticSamplers = 1;
+        globalRootSignatureDesc.pStaticSamplers = staticSamplers;
+
+        SerializeAndCreateRaytracingRootSignature(globalRootSignatureDesc, &m_computeGlobalRootSignature);
     }
 }
 
@@ -457,6 +615,19 @@ void SelectiveSDF::CreateRaytracingPipelineStateObject()
 
     // Create the state object.
     ThrowIfFailed(m_dxrDevice->CreateStateObject(raytracingPipeline, IID_PPV_ARGS(&m_dxrStateObject)), L"Couldn't create DirectX Raytracing state object.\n");
+}
+
+void SelectiveSDF::CreateComputePipelineStateObject()
+{
+    auto device = m_deviceResources->GetD3DDevice();
+
+    auto csBlob = CompileShaderLibrary(L"res/shaders/SurfaceExtract.hlsl", L"CS", L"cs_6_5");
+
+    D3D12_COMPUTE_PIPELINE_STATE_DESC computePipeline = {};
+
+    computePipeline.pRootSignature = m_computeGlobalRootSignature.Get(); // reuse root sig
+    computePipeline.CS = { csBlob->GetBufferPointer(), csBlob->GetBufferSize() };
+    device->CreateComputePipelineState(&computePipeline, IID_PPV_ARGS(&m_computeStateObject));
 }
 
 void SelectiveSDF::CreateDxilLibrarySubobjects(CD3DX12_STATE_OBJECT_DESC* raytracingPipeline)
@@ -593,25 +764,234 @@ void SelectiveSDF::BuildGeometry()
         ThrowIfFalse(descriptorIndexVB == descriptorIndexIB + 1, L"Vertex Buffer descriptor index must follow that of Index Buffer descriptor index");
 	}
 
+
+  //  const int LEAF_SIZE = 8;
+  //  for (int i = 0; i < SDFModelObjectCount; i++)
+  //  {
+  //      int objectIdx = m_objects.size() - SDFModelObjectCount + i;
+  //      auto& object = m_objects[objectIdx];
+
+  //      auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+  //      if (hybridModelObject == nullptr)
+  //      {
+  //          throw runtime_error("SDF Model Object insertion order is messed up!");
+  //      }
+
+  //      hybridModelObject->BuildLeafAtlas(device, commandList);
+
+  //      auto& sdfBuffer = hybridModelObject->GetLeafAtlasBuffer();
+  //      m_resourceManager->CreateTexture2DArraySRV(device, &sdfBuffer, hybridModelObject->GetLeafCount() * LEAF_SIZE);
+
+  //      if (i == 0)
+  //      {
+  //          m_sdfLeafAtlasGpuDescriptor = sdfBuffer.gpuDescriptorHandle;
+  //      }
+  //  }
+  //  for (int i = 0; i < SDFModelObjectCount; i++)
+  //  {
+  //      int objectIdx = m_objects.size() - SDFModelObjectCount + i;
+  //      auto& object = m_objects[objectIdx];
+
+  //      auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+  //      if (hybridModelObject == nullptr)
+  //      {
+  //          throw runtime_error("SDF Model Object insertion order is messed up!");
+  //      }
+
+  //      hybridModelObject->BuildInternalLevel1(device, commandList);
+
+  //      auto& sdfBuffer = hybridModelObject->GetInternal1NodeBuffer();
+  //      m_resourceManager->CreateBufferSRV(device, &sdfBuffer, hybridModelObject->GetInternal1Count(), sizeof(InternalNode));
+
+  //      if (i == 0)
+  //      {
+  //          m_sdfInternal1NodeGpuDescriptor = sdfBuffer.gpuDescriptorHandle;
+  //      }
+  //  }
+  //  for (int i = 0; i < SDFModelObjectCount; i++)
+  //  {
+  //      int objectIdx = m_objects.size() - SDFModelObjectCount + i;
+  //      auto& object = m_objects[objectIdx];
+
+  //      auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+  //      if (hybridModelObject == nullptr)
+  //      {
+  //          throw runtime_error("SDF Model Object insertion order is messed up!");
+  //      }
+
+  //      hybridModelObject->BuildInternalLevel2(device, commandList);
+
+  //      auto& sdfBuffer = hybridModelObject->GetInternal1NodeBuffer();
+  //      m_resourceManager->CreateBufferSRV(device, &sdfBuffer, hybridModelObject->GetInternal2Count(), sizeof(InternalNode));
+
+  //      if (i == 0)
+  //      {
+  //          m_sdfInternal2NodeGpuDescriptor = sdfBuffer.gpuDescriptorHandle;
+  //      }
+  //  }
+  //  for (int i = 0; i < SDFModelObjectCount; i++)
+  //  {
+  //      int objectIdx = m_objects.size() - SDFModelObjectCount + i;
+  //      auto& object = m_objects[objectIdx];
+
+  //      auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+  //      if (hybridModelObject == nullptr)
+  //      {
+  //          throw runtime_error("SDF Model Object insertion order is messed up!");
+  //      }
+
+  //      hybridModelObject->BuildRoot(device, commandList);
+
+  //      auto& sdfBuffer = hybridModelObject->GetRootNodeBuffer();
+		//m_resourceManager->CreateBufferSRV(device, &sdfBuffer, 1, sizeof(InternalNode)); // Only one root node
+
+  //      if (i == 0)
+  //      {
+  //          m_sdfRootNodeGpuDescriptor = sdfBuffer.gpuDescriptorHandle;
+  //      }
+  //  }
+
+
     // import sdf textures here
-    bool gpuHandleSet = false;
-    for (auto& object : m_objects)
+    //bool gpuHandleSet = false;
+    //for (auto& object : m_objects)
+    //{
+    //    auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+    //    if (hybridModelObject == nullptr) continue;
+
+    //    //hybridModelObject->BuildSDF(device, commandList);
+    //    hybridModelObject->BuildSVS(device, commandList);
+
+
+    //    auto& sdfBuffer = hybridModelObject->GetSDFBuffer();
+    //    //m_resourceManager->CreateTexture3DSRV(device, &sdfBuffer);
+    //    m_resourceManager->CreateBufferSRV(device, &sdfBuffer, hybridModelObject->GetCandidateVoxelCount(), sizeof(SurfaceVoxel));
+
+    //    if (!gpuHandleSet)
+    //    {
+    //        m_sdfVoxelsGpuDescriptor = sdfBuffer.gpuDescriptorHandle;
+    //        gpuHandleSet = true;
+    //    }
+    //}
+    for (int i = 0; i < SDFModelObjectCount; i++)
     {
+        int objectIdx = m_objects.size() - SDFModelObjectCount + i;
+        auto& object = m_objects[objectIdx];
+
         auto hybridModelObject = dynamic_cast<AModel*>(object.get());
-        if (hybridModelObject == nullptr) continue;
+        if (hybridModelObject == nullptr)
+        {
+            throw runtime_error("SDF Model Object insertion order is messed up!");
+        }
+
+        hybridModelObject->BuildSVS(device, commandList);
+
+        auto& sdfBuffer = hybridModelObject->GetSDFVoxelBuffer();
+        m_resourceManager->CreateBufferSRV(device, &sdfBuffer, hybridModelObject->GetCandidateVoxelCount(), sizeof(SurfaceVoxel));
+
+        if (i == 0)
+        {
+            m_sdfVoxelsGpuDescriptor = sdfBuffer.srvGpuDescriptorHandle;
+        }
+    }
+
+    for (int i = 0; i < SDFModelObjectCount; i++)
+    {
+        int objectIdx = m_objects.size() - SDFModelObjectCount + i;
+        auto& object = m_objects[objectIdx];
+
+        auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+        if (hybridModelObject == nullptr)
+        {
+            throw runtime_error("SDF Model Object insertion order is messed up!");
+        }
 
         hybridModelObject->BuildSDF(device, commandList);
 
-
-        auto& sdfBuffer = hybridModelObject->GetSDFBuffer();
+        auto& sdfBuffer = hybridModelObject->GetSDFTextureBuffer();
         m_resourceManager->CreateTexture3DSRV(device, &sdfBuffer);
 
-        if (!gpuHandleSet)
+        if (i == 0)
         {
-            m_sdfTexturesGpuDescriptor = sdfBuffer.gpuDescriptorHandle;
-            gpuHandleSet = true;
+            m_sdfTexturesGpuDescriptor = sdfBuffer.srvGpuDescriptorHandle;
         }
     }
+
+
+	UINT brickCount = 0;
+    for (int i = 0; i < SDFInstanceCount; i++)
+    {
+        int instanceIdx = m_instances.size() - SDFInstanceCount + i;
+        auto& instance = m_instances[instanceIdx];
+        auto& object = m_objects[instance.objectIndex];
+
+        auto hybridObject = dynamic_cast<HybridObject*>(object.get());
+        if (hybridObject == nullptr)
+        {
+            throw runtime_error("SDF Model Object insertion order is messed up!");
+        }
+
+		brickCount += hybridObject->GetBrickCount();
+    }
+
+    m_brickTextureBuffers.resize(SDFInstanceCount);
+    m_brickMetaSB.Create(device, brickCount, 1, L"SDF Instance Bricks Structured Buffer");
+    UINT brickIndex = 0;
+    for (int i = 0; i < SDFInstanceCount; i++)
+    {
+        int instanceIdx = m_instances.size() - SDFInstanceCount + i;
+        auto& instance = m_instances[instanceIdx];
+        auto& object = m_objects[instance.objectIndex];
+
+        auto hybridObject = dynamic_cast<HybridObject*>(object.get());
+        if (hybridObject == nullptr)
+        {
+            throw runtime_error("SDF Model Object insertion order is messed up!");
+        }
+
+        m_sdfInstancesSB[i].brickStart = brickIndex;
+
+		auto& brickMeta = hybridObject->GetBricks();
+        for (int i = 0; i < brickMeta.size(); i++)
+        {
+            m_brickMetaSB[brickIndex].packedCoord = brickMeta[i].packedCoord;
+			m_brickMetaSB[brickIndex].sliceStart = brickMeta[i].sliceStart;
+			m_brickMetaSB[brickIndex].instanceIndex = instanceIdx;
+
+            brickIndex++;
+        }
+
+
+        UINT sliceCount = brickMeta.size() * 10;
+        AllocateTexture(
+            device,
+            { 10, 10, sliceCount },
+            &(m_brickTextureBuffers[i].resource),
+            DXGI_FORMAT_R32G32B32A32_FLOAT,
+            D3D12_RESOURCE_DIMENSION_TEXTURE2D,
+            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE,
+            D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS
+        );
+
+        m_resourceManager->CreateTexture2DArraySRV(device, &m_brickTextureBuffers[i], sliceCount, DXGI_FORMAT_R32G32B32A32_FLOAT);
+
+        if (i == 0)
+        {
+            m_sdfBricksSRVGpuDescriptor = m_brickTextureBuffers[i].srvGpuDescriptorHandle;
+        }
+    }
+    m_brickMetaSB.CopyStagingToGpu(0);
+
+
+  //  m_candidateVoxelCount = 0;
+  //  for (auto& instance : m_instances)
+  //  {
+  //      auto& object = m_objects[instance.objectIndex];
+  //      if (object->GetType() != ObjectType::Hybrid) continue;
+  //      auto hybridObject = static_cast<HybridObject*>(object.get());
+  //      
+		//m_candidateVoxelCount += hybridObject->GetCandidateVoxelCount();
+  //  }
 
     // Execute to complete the copies
     m_deviceResources->ExecuteCommandList();
@@ -633,118 +1013,245 @@ void SelectiveSDF::BuildGeometryDescsForBottomLevelAS(vector<vector<D3D12_RAYTRA
     // Mark the geometry as opaque.
     D3D12_RAYTRACING_GEOMETRY_FLAGS geometryFlags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
 
-
-	//geometryDescs.resize(m_objects.size());
-    
-    for(UINT i = 0; i < m_objects.size(); i++)
+    // First, add all triangle-only objects (shared BLAS)
+    for (UINT i = 0; i < m_objects.size(); i++)
     {
-        switch(m_objects[i]->GetType())
+        if (m_objects[i]->GetType() == ObjectType::Triangle)
         {
-            case ObjectType::Hybrid:
-            {
-				vector<D3D12_RAYTRACING_GEOMETRY_DESC> geometryDescsForHybridObject;
+            vector<D3D12_RAYTRACING_GEOMETRY_DESC> geometryDescsForObject(1);
+            auto& geometryDesc = geometryDescsForObject[0];
 
-                auto hybridObject = static_cast<HybridObject*>(m_objects[i].get());
-                auto aabbBuffer = hybridObject->GetAABBBuffer();
-                UINT aabbCount = hybridObject->GetAAbbCount();
+            auto indexBuffer = m_objects[i]->GetIndexBuffer();
+            auto vertexBuffer = m_objects[i]->GetVertexBuffer();
+
+            geometryDesc = {};
+            geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+            geometryDesc.Triangles.IndexBuffer = indexBuffer.resource->GetGPUVirtualAddress();
+            geometryDesc.Triangles.IndexCount = static_cast<UINT>(indexBuffer.resource->GetDesc().Width) / sizeof(Index);
+            geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
+            geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+            geometryDesc.Triangles.VertexCount = static_cast<UINT>(vertexBuffer.resource->GetDesc().Width) / sizeof(Vertex);
+            geometryDesc.Triangles.VertexBuffer.StartAddress = vertexBuffer.resource->GetGPUVirtualAddress();
+            geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+            geometryDesc.Flags = geometryFlags;
+
+            geometryDescs.push_back(move(geometryDescsForObject));
+        }
+    }
 
 
-                D3D12_RAYTRACING_GEOMETRY_DESC templateDesc = {};
-                templateDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
-                templateDesc.AABBs.AABBCount = aabbCount;
-                templateDesc.AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
-                templateDesc.Flags = geometryFlags;
 
-                geometryDescsForHybridObject.resize(aabbCount, templateDesc);
+    // Then, add hybrid objects - one triangle BLAS per object type, one AABB BLAS per instance
+    set<UINT> processedHybridObjects;
 
-                for (UINT j = 0; j < aabbCount; j++)
-                {
-                    geometryDescsForHybridObject[j].AABBs.AABBs.StartAddress = aabbBuffer.resource->GetGPUVirtualAddress() + j * sizeof(D3D12_RAYTRACING_AABB);
-                }
+    UINT processedVoxelCount = 0;
+    for (UINT instIdx = 0; instIdx < m_instances.size(); instIdx++)
+    {
+        auto& instance = m_instances[instIdx];
+        auto& object = m_objects[instance.objectIndex];
 
-				geometryDescs.push_back(move(geometryDescsForHybridObject));
-                //break;
-            }
-            case ObjectType::Triangle:
-            {
-                vector<D3D12_RAYTRACING_GEOMETRY_DESC> geometryDescsForObject;
+        if (object->GetType() != ObjectType::Hybrid) continue;
 
-                auto indexBuffer = m_objects[i]->GetIndexBuffer();
-                auto vertexBuffer = m_objects[i]->GetVertexBuffer();
 
-                geometryDescsForObject.resize(1);
+        auto hybridObject = static_cast<HybridObject*>(object.get());
 
-                auto& geometryDesc = geometryDescsForObject[0];
+        // Add triangle BLAS once per unique hybrid object
+        if (processedHybridObjects.find(instance.objectIndex) == processedHybridObjects.end())
+        {
+            vector<D3D12_RAYTRACING_GEOMETRY_DESC> triangleGeomDesc(1);
+            auto& triDesc = triangleGeomDesc[0];
 
-                // TODO: set vertex and index buffers, their counts and startaddesses for each triangle geometry
-                geometryDesc = {};
-                geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
-                geometryDesc.Triangles.IndexBuffer = indexBuffer.resource->GetGPUVirtualAddress();
-                geometryDesc.Triangles.IndexCount = static_cast<UINT>(indexBuffer.resource->GetDesc().Width) / sizeof(Index);
-                geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
-                geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
-                geometryDesc.Triangles.VertexCount = static_cast<UINT>(vertexBuffer.resource->GetDesc().Width) / sizeof(Vertex);
-                geometryDesc.Triangles.VertexBuffer.StartAddress = vertexBuffer.resource->GetGPUVirtualAddress();
-                geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
-                geometryDesc.Flags = geometryFlags;
+            auto indexBuffer = object->GetIndexBuffer();
+            auto vertexBuffer = object->GetVertexBuffer();
 
-				geometryDescs.push_back(move(geometryDescsForObject));
-                break;
-            }
-            default:
-                throw std::runtime_error("Unknown object type for geometry descs");
-		}
-	}
+            triDesc = {};
+            triDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+            triDesc.Triangles.IndexBuffer = indexBuffer.resource->GetGPUVirtualAddress();
+            triDesc.Triangles.IndexCount = static_cast<UINT>(indexBuffer.resource->GetDesc().Width) / sizeof(Index);
+            triDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
+            triDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+            triDesc.Triangles.VertexCount = static_cast<UINT>(vertexBuffer.resource->GetDesc().Width) / sizeof(Vertex);
+            triDesc.Triangles.VertexBuffer.StartAddress = vertexBuffer.resource->GetGPUVirtualAddress();
+            triDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+            triDesc.Flags = geometryFlags;
+
+            geometryDescs.push_back(move(triangleGeomDesc));
+            processedHybridObjects.insert(instance.objectIndex);
+        }
+
+        // Add AABB BLAS for each instance
+        vector<D3D12_RAYTRACING_GEOMETRY_DESC> aabbGeomDesc(1);
+        auto& aabbDesc = aabbGeomDesc[0];
+
+        aabbDesc = {};
+        aabbDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+        //aabbDesc.AABBs.AABBCount = hybridObject->GetCandidateVoxelCount();
+        aabbDesc.AABBs.AABBCount = hybridObject->GetAAbbCount();
+        //aabbDesc.AABBs.AABBs.StrideInBytes = sizeof(VoxelAABB);
+        aabbDesc.AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
+        aabbDesc.Flags = geometryFlags;
+        UINT64 offsetInBytes = processedVoxelCount * sizeof(VoxelAABB);
+        //aabbDesc.AABBs.AABBs.StartAddress = m_computeOutput.Get()->GetGPUVirtualAddress() + offsetInBytes;
+        aabbDesc.AABBs.AABBs.StartAddress = hybridObject->GetAABBBuffer().resource->GetGPUVirtualAddress();
+
+		processedVoxelCount += hybridObject->GetCandidateVoxelCount();
+
+        geometryDescs.push_back(move(aabbGeomDesc));
+    }
+
+
+    
+ //   for(UINT i = 0; i < m_objects.size(); i++)
+ //   {
+ //       switch(m_objects[i]->GetType())
+ //       {
+ //           case ObjectType::Hybrid:
+ //           {
+	//			vector<D3D12_RAYTRACING_GEOMETRY_DESC> geometryDescsForHybridObject;
+
+ //               auto hybridObject = static_cast<HybridObject*>(m_objects[i].get());
+ //               auto aabbBuffer = hybridObject->GetAABBBuffer();
+ //               UINT aabbCount = hybridObject->GetAAbbCount();
+
+	//			bool isModel = hybridObject->GetSDFPrimitiveType() == SDFPrimitive::AModel;
+
+ //               geometryDescsForHybridObject.resize(1);
+ //               auto& templateDesc = geometryDescsForHybridObject[0];
+
+ //               templateDesc = {};
+ //               templateDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+ //               templateDesc.AABBs.AABBCount = aabbCount;
+ //               templateDesc.AABBs.AABBs.StrideInBytes = sizeof(D3D12_RAYTRACING_AABB);
+ //               templateDesc.Flags = geometryFlags;
+
+ //               templateDesc.AABBs.AABBs.StartAddress = aabbBuffer.resource->GetGPUVirtualAddress();
+
+ //               geometryDescs.push_back(move(geometryDescsForHybridObject));
+ //               //break;
+ //           }
+ //           case ObjectType::Triangle:
+ //           {
+ //               vector<D3D12_RAYTRACING_GEOMETRY_DESC> geometryDescsForObject;
+
+ //               auto indexBuffer = m_objects[i]->GetIndexBuffer();
+ //               auto vertexBuffer = m_objects[i]->GetVertexBuffer();
+
+ //               geometryDescsForObject.resize(1);
+
+ //               auto& geometryDesc = geometryDescsForObject[0];
+
+ //               // set vertex and index buffers, their counts and startaddesses for each triangle geometry
+ //               geometryDesc = {};
+ //               geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_TRIANGLES;
+ //               geometryDesc.Triangles.IndexBuffer = indexBuffer.resource->GetGPUVirtualAddress();
+ //               geometryDesc.Triangles.IndexCount = static_cast<UINT>(indexBuffer.resource->GetDesc().Width) / sizeof(Index);
+ //               geometryDesc.Triangles.IndexFormat = DXGI_FORMAT_R32_UINT;
+ //               geometryDesc.Triangles.VertexFormat = DXGI_FORMAT_R32G32B32_FLOAT;
+ //               geometryDesc.Triangles.VertexCount = static_cast<UINT>(vertexBuffer.resource->GetDesc().Width) / sizeof(Vertex);
+ //               geometryDesc.Triangles.VertexBuffer.StartAddress = vertexBuffer.resource->GetGPUVirtualAddress();
+ //               geometryDesc.Triangles.VertexBuffer.StrideInBytes = sizeof(Vertex);
+ //               geometryDesc.Flags = geometryFlags;
+
+	//			geometryDescs.push_back(move(geometryDescsForObject));
+ //               break;
+ //           }
+ //           default:
+ //               throw std::runtime_error("Unknown object type for geometry descs");
+	//	}
+	//}
 }
 
 template <class InstanceDescType, class BLASPtrType>
-void SelectiveSDF::BuildBottomLevelASInstanceDescs(vector<BLASPtrType>& bottomLevelASaddresses, UINT& instanceDescsCount, bool updateOnly)
+void SelectiveSDF::BuildBottomLevelASInstanceDescs(vector<BLASPtrType>& bottomLevelASbuffers, UINT& instanceDescsCount, bool updateOnly)
 {
     auto device = m_deviceResources->GetD3DDevice();
 
     vector<InstanceDescType> instanceDescs;
-    UINT blasIndex = 0;
 
-    for (UINT i = 0; i < m_instances.size(); i++)
+    for (UINT instIdx = 0; instIdx < m_instances.size(); instIdx++)
     {
-        auto& instance = m_instances[i];
+        auto& instance = m_instances[instIdx];
         bool isHybrid = m_objects[instance.objectIndex]->GetType() == ObjectType::Hybrid;
 
-        InstanceDescType instanceDesc = {};
-        instanceDesc.InstanceID = instance.objectIndex;
-        instanceDesc.InstanceMask = 0x01;
-        instanceDesc.InstanceContributionToHitGroupIndex = 0;
-        instanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex];
-
-        InstanceDescType aabbInstanceDesc = {};
         if (isHybrid)
         {
-            instanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex + 1];
-            instanceDesc.InstanceMask = 0x04;
+            UINT aabbBLASIdx = m_instanceToAABBBLAS.at(instIdx);
+            UINT triangleBLASIdx = m_objectToTriangleBLAS.at(instance.objectIndex);
 
-            auto hybridObject = static_cast<HybridObject*>(m_objects[instance.objectIndex].get());
-
-            aabbInstanceDesc.InstanceID = instance.objectIndex; // same instance id as its associated polygonal geometry
+            // AABB instance desc
+            InstanceDescType aabbInstanceDesc = {};
+            aabbInstanceDesc.InstanceID = instance.objectIndex;
             aabbInstanceDesc.InstanceMask = 0x02;
-            //aabbInstanceDesc.InstanceContributionToHitGroupIndex = hybridObject->GetHitGroupIndex();
-            aabbInstanceDesc.InstanceContributionToHitGroupIndex = 1; // probably no need for separate intersection shaders per hybrid object type??
-            aabbInstanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex];
-        }
-
-
-        if (isHybrid)
-        {
+            aabbInstanceDesc.InstanceContributionToHitGroupIndex = 1;
+            aabbInstanceDesc.AccelerationStructure = bottomLevelASbuffers[aabbBLASIdx].accelerationStructure->GetGPUVirtualAddress();
             XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(aabbInstanceDesc.Transform), instance.CalculateTransform());
             instanceDescs.push_back(aabbInstanceDesc);
-        }
-        XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(instanceDesc.Transform), instance.CalculateTransform());
-        instanceDescs.push_back(instanceDesc);
 
-        if (i < m_instances.size() - 1 && m_instances[i + 1].objectIndex > instance.objectIndex)
+            // Triangle instance desc
+            InstanceDescType triInstanceDesc = {};
+            triInstanceDesc.InstanceID = instance.objectIndex;
+            triInstanceDesc.InstanceMask = 0x04;
+            triInstanceDesc.InstanceContributionToHitGroupIndex = 0;
+            triInstanceDesc.AccelerationStructure = bottomLevelASbuffers[triangleBLASIdx].accelerationStructure->GetGPUVirtualAddress();
+            XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(triInstanceDesc.Transform), instance.CalculateTransform());
+            instanceDescs.push_back(triInstanceDesc);
+        }
+        else
         {
-            blasIndex += isHybrid ? 2 : 1;
+            UINT blasIdx = m_objectToTriangleBLAS.at(instance.objectIndex);
+
+            InstanceDescType instanceDesc = {};
+            instanceDesc.InstanceID = instance.objectIndex;
+            instanceDesc.InstanceMask = 0x01;
+            instanceDesc.InstanceContributionToHitGroupIndex = 0;
+            instanceDesc.AccelerationStructure = bottomLevelASbuffers[blasIdx].accelerationStructure->GetGPUVirtualAddress();
+            XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(instanceDesc.Transform), instance.CalculateTransform());
+            instanceDescs.push_back(instanceDesc);
         }
     }
+
+
+    //UINT blasIndex = 0;
+
+    //for (UINT i = 0; i < m_instances.size(); i++)
+    //{
+    //    auto& instance = m_instances[i];
+    //    bool isHybrid = m_objects[instance.objectIndex]->GetType() == ObjectType::Hybrid;
+
+    //    InstanceDescType instanceDesc = {};
+    //    instanceDesc.InstanceID = instance.objectIndex;
+    //    instanceDesc.InstanceMask = 0x01;
+    //    instanceDesc.InstanceContributionToHitGroupIndex = 0;
+    //    instanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex];
+    //    
+    //    if (isHybrid)
+    //    {
+    //        instanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex + 1];
+    //        instanceDesc.InstanceMask = 0x04;
+
+    //        auto hybridObject = static_cast<HybridObject*>(m_objects[instance.objectIndex].get());
+
+    //        InstanceDescType aabbInstanceDesc = {};
+    //        aabbInstanceDesc.InstanceID = instance.objectIndex; // same instance id as its associated polygonal geometry
+    //        aabbInstanceDesc.InstanceMask = 0x02;
+    //        //aabbInstanceDesc.InstanceContributionToHitGroupIndex = hybridObject->GetHitGroupIndex();
+    //        aabbInstanceDesc.InstanceContributionToHitGroupIndex = 1; // probably no need for separate intersection shaders per hybrid object type??
+    //        aabbInstanceDesc.AccelerationStructure = bottomLevelASaddresses[blasIndex];
+
+
+
+    //        XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(aabbInstanceDesc.Transform), instance.CalculateTransform());
+    //        instanceDescs.push_back(aabbInstanceDesc);
+    //    }
+
+    //    XMStoreFloat3x4(reinterpret_cast<XMFLOAT3X4*>(instanceDesc.Transform), instance.CalculateTransform());
+    //    instanceDescs.push_back(instanceDesc);
+
+    //    if (i < m_instances.size() - 1 && m_instances[i + 1].objectIndex > instance.objectIndex)
+    //    {
+    //        blasIndex += isHybrid ? 2 : 1;
+    //    }
+    //}
 
     if(instanceDescs.empty())
     {
@@ -851,16 +1358,7 @@ void SelectiveSDF::BuildTopLevelAS(AccelerationStructureBuffers* bottomLevelAS, 
 
     // Create instance descs for the bottom-level acceleration structures
     UINT topLevelASCount;
-    {
-		vector<D3D12_GPU_VIRTUAL_ADDRESS> bottomLevelASaddresses;
-		bottomLevelASaddresses.reserve(bottomLevelASCount);
-
-        for(UINT i = 0; i < bottomLevelASCount; i++)
-        {
-            bottomLevelASaddresses.push_back(bottomLevelAS[i].accelerationStructure->GetGPUVirtualAddress());
-		}
-        BuildBottomLevelASInstanceDescs<D3D12_RAYTRACING_INSTANCE_DESC>(bottomLevelASaddresses, topLevelASCount);
-    }
+    BuildBottomLevelASInstanceDescs<D3D12_RAYTRACING_INSTANCE_DESC>(m_bottomLevelAS, topLevelASCount);
 
     // Get required sizes for an acceleration structure.
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC topLevelBuildDesc = {};
@@ -915,15 +1413,72 @@ void SelectiveSDF::BuildTopLevelAS(AccelerationStructureBuffers* bottomLevelAS, 
     m_topLevelAS->ResultDataMaxSizeInBytes = topLevelPrebuildInfo.ResultDataMaxSizeInBytes;
 }
 
+void SelectiveSDF::UpdateDynamicBLAS()
+{
+    auto commandList = m_deviceResources->GetCommandList();
+
+    // Collect all BLAS that need rebuilding
+    vector<UINT> blasIndicesToRebuild;
+
+	UINT processedVoxelCount = 0;
+    for (const auto& [instIdx, blasIdx] : m_instanceToAABBBLAS)
+    {
+        auto& instance = m_instances[instIdx];
+        auto hybridObject = dynamic_cast<HybridObject*>(m_objects[instance.objectIndex].get());
+
+        // Step 1: Update the AABB buffer with new surface voxels
+        //hybridObject->UpdateAABBBuffer(commandList);
+
+        // Step 2: Create NEW geometry descriptor with updated info
+        D3D12_RAYTRACING_GEOMETRY_DESC geometryDesc = {};
+        geometryDesc.Type = D3D12_RAYTRACING_GEOMETRY_TYPE_PROCEDURAL_PRIMITIVE_AABBS;
+        geometryDesc.AABBs.AABBCount = hybridObject->GetCandidateVoxelCount();
+        geometryDesc.AABBs.AABBs.StrideInBytes = sizeof(VoxelAABB);
+        geometryDesc.Flags = D3D12_RAYTRACING_GEOMETRY_FLAG_OPAQUE;
+        UINT64 offsetInBytes = processedVoxelCount * sizeof(VoxelAABB);
+        geometryDesc.AABBs.AABBs.StartAddress = m_computeOutput.Get()->GetGPUVirtualAddress() + offsetInBytes;
+        //geometryDesc.AABBs.AABBs.StartAddress = m_computeOutput.Get()->GetGPUVirtualAddress();
+
+		processedVoxelCount += hybridObject->GetCandidateVoxelCount();
+
+        // Step 3: Rebuild BLAS with new geometry
+        D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC buildDesc = {};
+        buildDesc.Inputs.Type = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_TYPE_BOTTOM_LEVEL;
+        buildDesc.Inputs.Flags = D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD;
+        buildDesc.Inputs.NumDescs = 1;
+        buildDesc.Inputs.pGeometryDescs = &geometryDesc;  // Points to our new descriptor
+        buildDesc.Inputs.DescsLayout = D3D12_ELEMENTS_LAYOUT_ARRAY;
+
+        // Reuse existing BLAS and scratch buffers
+        auto& blas = m_bottomLevelAS[blasIdx];
+        buildDesc.DestAccelerationStructureData = blas.accelerationStructure->GetGPUVirtualAddress();
+        buildDesc.ScratchAccelerationStructureData = blas.scratch->GetGPUVirtualAddress();
+
+        // Build it!
+        m_dxrCommandList->BuildRaytracingAccelerationStructure(&buildDesc, 0, nullptr);
+
+        blasIndicesToRebuild.push_back(blasIdx);
+    }
+
+    // Batch barrier for all rebuilt BLAS
+    if (!blasIndicesToRebuild.empty())
+    {
+        UINT blasCount = static_cast<UINT>(blasIndicesToRebuild.size());
+        // Batch all resource barriers for bottom-level AS builds.
+        vector<D3D12_RESOURCE_BARRIER> resourceBarriers;
+        resourceBarriers.resize(blasCount);
+        for (UINT i = 0; i < blasCount; i++)
+        {
+            resourceBarriers[i] = CD3DX12_RESOURCE_BARRIER::UAV(m_bottomLevelAS[blasIndicesToRebuild[i]].accelerationStructure.Get());
+        }
+        commandList->ResourceBarrier(blasCount, resourceBarriers.data());
+    }
+}
+
 void SelectiveSDF::UpdateTopLevelAS()
 {
-    vector<D3D12_GPU_VIRTUAL_ADDRESS> bottomLevelASaddresses;
-    for (auto& blas : m_bottomLevelAS)
-    {
-        bottomLevelASaddresses.push_back(blas->GetGPUVirtualAddress());
-    }
     UINT topLevelASCount;
-    BuildBottomLevelASInstanceDescs<D3D12_RAYTRACING_INSTANCE_DESC>(bottomLevelASaddresses, topLevelASCount, true);
+    BuildBottomLevelASInstanceDescs<D3D12_RAYTRACING_INSTANCE_DESC>(m_bottomLevelAS, topLevelASCount, true);
 
     // Get required sizes for an acceleration structure.
     D3D12_BUILD_RAYTRACING_ACCELERATION_STRUCTURE_DESC topLevelBuildDesc = {};
@@ -952,35 +1507,97 @@ void SelectiveSDF::BuildAccelerationStructures()
     commandList->Reset(commandAllocator, nullptr);
 
     // Build bottom-level AS.
-    vector<AccelerationStructureBuffers> bottomLevelAS;
+    //vector<AccelerationStructureBuffers> bottomLevelAS;
     vector<vector<D3D12_RAYTRACING_GEOMETRY_DESC>> geometryDescs;
+    
     {
         BuildGeometryDescsForBottomLevelAS(geometryDescs);
-		bottomLevelAS.resize(geometryDescs.size());
+        m_bottomLevelAS.resize(geometryDescs.size());
+    }
 
-        // Build all bottom-level AS.
-        for (UINT i = 0; i < geometryDescs.size(); i++)
+    {
+        // Build BLAS mapping info
+        m_blasInfos.clear();
+        UINT blasIdx = 0;
+
+        // Triangle-only objects
+        for (UINT i = 0; i < m_objects.size(); i++)
         {
-            bottomLevelAS[i] = BuildBottomLevelAS(geometryDescs[i]);
+            if (m_objects[i]->GetType() == ObjectType::Triangle)
+            {
+                m_blasInfos.push_back({ BLASInfo::TRIANGLE, i, UINT_MAX });
+                blasIdx++;
+            }
+        }
+
+        // Hybrid objects
+        std::set<UINT> processedHybridObjects;
+        for (UINT instIdx = 0; instIdx < m_instances.size(); instIdx++)
+        {
+            auto& instance = m_instances[instIdx];
+            if (m_objects[instance.objectIndex]->GetType() == ObjectType::Hybrid)
+            {
+                // Triangle BLAS (one per unique object)
+                if (processedHybridObjects.find(instance.objectIndex) == processedHybridObjects.end())
+                {
+                    m_blasInfos.push_back({ BLASInfo::HYBRID_TRIANGLE, instance.objectIndex, UINT_MAX });
+                    processedHybridObjects.insert(instance.objectIndex);
+                    blasIdx++;
+                }
+
+                // AABB BLAS (one per instance)
+                m_blasInfos.push_back({ BLASInfo::HYBRID_AABB, instance.objectIndex, instIdx });
+                blasIdx++;
+            }
+        }
+
+
+        m_objectToTriangleBLAS.clear();
+        m_instanceToAABBBLAS.clear();
+
+        for (UINT i = 0; i < m_blasInfos.size(); i++)
+        {
+            const auto& info = m_blasInfos[i];
+
+            if (info.type == BLASInfo::Type::TRIANGLE ||
+                info.type == BLASInfo::Type::HYBRID_TRIANGLE)
+            {
+                m_objectToTriangleBLAS[info.objectIndex] = i;
+            }
+            else if (info.type == BLASInfo::Type::HYBRID_AABB)
+            {
+                m_instanceToAABBBLAS[info.instanceIndex] = i;
+            }
         }
     }
 
-	UINT BlasCount = static_cast<UINT>(bottomLevelAS.size());
+
+    // Build all bottom-level AS.
+    for (UINT i = 0; i < geometryDescs.size(); i++)
+    {
+        auto buildFlags = (m_blasInfos[i].type == BLASInfo::HYBRID_AABB) ?
+            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_BUILD :
+            D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_PREFER_FAST_TRACE;
+
+        m_bottomLevelAS[i] = BuildBottomLevelAS(geometryDescs[i], buildFlags);
+    }
+
+	UINT blasCount = static_cast<UINT>(m_bottomLevelAS.size());
 
     // Batch all resource barriers for bottom-level AS builds.
     vector<D3D12_RESOURCE_BARRIER> resourceBarriers;
-    resourceBarriers.resize(BlasCount);
-    for (UINT i = 0; i < BlasCount; i++)
+    resourceBarriers.resize(blasCount);
+    for (UINT i = 0; i < blasCount; i++)
     {
-        resourceBarriers[i] = CD3DX12_RESOURCE_BARRIER::UAV(bottomLevelAS[i].accelerationStructure.Get());
+        resourceBarriers[i] = CD3DX12_RESOURCE_BARRIER::UAV(m_bottomLevelAS[i].accelerationStructure.Get());
     }
-    commandList->ResourceBarrier(BlasCount, resourceBarriers.data());
+    commandList->ResourceBarrier(blasCount, resourceBarriers.data());
 
 
     // Build top-level AS.
     BuildTopLevelAS(
-        bottomLevelAS.data(),
-        BlasCount,
+        m_bottomLevelAS.data(),
+        blasCount,
         D3D12_RAYTRACING_ACCELERATION_STRUCTURE_BUILD_FLAG_ALLOW_UPDATE
     );
 
@@ -991,11 +1608,11 @@ void SelectiveSDF::BuildAccelerationStructures()
     m_deviceResources->WaitForGpu();
 
     // Store the AS buffers. The rest of the buffers will be released once we exit the function.
-    m_bottomLevelAS.resize(BlasCount);
+    /*m_bottomLevelAS.resize(BlasCount);
     for (UINT i = 0; i < BlasCount; i++)
     {
         m_bottomLevelAS[i] = bottomLevelAS[i].accelerationStructure;
-    }
+    }*/
 }
 
 void SelectiveSDF::CreateConstantBuffers()
@@ -1004,8 +1621,19 @@ void SelectiveSDF::CreateConstantBuffers()
     auto frameCount = m_deviceResources->GetBackBufferCount();
 
     m_sceneCB.Create(device, frameCount, L"Scene Constant Buffer");
+
+    m_sceneCB->triangeObjectCount = m_objects.size() - SDFObjectCount;
+    m_sceneCB->sdfObjectCount = SDFObjectCount;
     m_sceneCB->triangleInstanceCount = m_instances.size() - SDFInstanceCount;
     m_sceneCB->sdfInstanceCount = SDFInstanceCount;
+
+	m_computeCB.Create(device, 1, L"Compute Constant Buffer");
+    //m_computeCB->candidateVoxelCount = m_candidateVoxelCount;
+    m_computeCB->triangeObjectCount = m_objects.size() - SDFObjectCount;
+    m_computeCB->sdfObjectCount = SDFObjectCount;
+    m_computeCB->triangleInstanceCount = m_instances.size() - SDFInstanceCount;
+    m_computeCB->sdfInstanceCount = SDFInstanceCount;
+    m_computeCB.CopyStagingToGpu(0);
 }
 
 void SelectiveSDF::CreateStructuredBuffers()
@@ -1013,11 +1641,71 @@ void SelectiveSDF::CreateStructuredBuffers()
     auto device = m_deviceResources->GetD3DDevice();
     auto frameCount = m_deviceResources->GetBackBufferCount();
 
-    m_sdfObjectsSB.Create(device, SDFInstanceCount, frameCount, L"SDF Objects Structured Buffer");
+    m_sdfInstancesSB.Create(device, SDFInstanceCount, frameCount, L"SDF Instances Structured Buffer");
+
+    m_bvhNodesSB.Create(device, m_bvhBuilder.m_nodes.size(), frameCount, L"BVH Structured Buffer");
+    m_instanceIndicesSB.Create(device, m_bvhBuilder.m_flatInstanceIndices.size(), frameCount, L"BVH Node Instances Structured Buffer");
+
+
+    m_sdfObjectsSB.Create(device, SDFObjectCount, 1, L"SDF Objects Structured Buffer");
+    UINT objectIdx, textureIdx = 0;
+    for (UINT i = 0; i < SDFObjectCount; i++)
+    {
+        objectIdx = m_objects.size() - SDFObjectCount + i;
+        auto& object = m_objects[objectIdx];
+
+        if (object->GetType() != ObjectType::Hybrid)
+        {
+            throw runtime_error("Instance insertion order is messed up!");
+        }
+
+        auto hybridObject = static_cast<HybridObject*>(object.get());
+
+		auto primitiveType = hybridObject->GetSDFPrimitiveType();
+        m_sdfObjectsSB[i].primitiveType = primitiveType;
+
+        if (primitiveType == SDFPrimitive::AModel)
+        {
+            m_sdfObjectsSB[i].textureIndex = textureIdx++; // Only process AModel type for brick atlas
+        }
+    }
+
+    // uncomment this if it's not being modified later
+    m_sdfObjectsSB.CopyStagingToGpu(0);
 
     /*auto size = m_grid.GetHashTableSize();
     m_hashTableSB.Create(device, m_grid.GetHashTableSize(), frameCount, L"Hash Table Structured Buffer");
     m_instanceIndicesSB.Create(device, m_grid.GetInstanceIndicesSize(), frameCount, L"Hash Table Instance Indices Structured Buffer");*/
+
+    //m_candidateVoxelsSB.Create(device, m_candidateVoxelCount, 1, L"Candidate Voxels Structured Buffer");
+    //{
+    //    int instanceIdx = 0;
+    //    int voxelIndex = 0;
+    //    for (auto& instance : m_instances)
+    //    {
+    //        auto& object = m_objects[instance.objectIndex];
+    //        if (object->GetType() != ObjectType::Hybrid) continue;
+    //        auto hybridObject = static_cast<HybridObject*>(object.get());
+
+    //        auto& candidateVoxels = hybridObject->GetCandidateVoxels();
+    //        for (int i = 0; i < candidateVoxels.size(); i++)
+    //        {
+    //            /*m_candidateVoxelsSB[voxelIndex] = candidateVoxels[i];
+    //            m_candidateVoxelsSB[voxelIndex].instanceIndex = instanceIdx;*/
+
+    //            uint32_t packed = (candidateVoxels[i].x & 0x3F) |
+    //                ((candidateVoxels[i].y & 0x3F) << 6) |
+    //                ((candidateVoxels[i].z & 0x3F) << 12) |
+    //                (instanceIdx << 18);
+
+    //            m_candidateVoxelsSB[voxelIndex] = packed;
+
+    //            voxelIndex++;
+    //        }
+    //        instanceIdx++;
+    //    }
+    //}
+    //m_candidateVoxelsSB.CopyStagingToGpu(0);
 }
 
 void SelectiveSDF::BuildShaderTables()
@@ -1155,6 +1843,34 @@ void SelectiveSDF::CreateRaytracingOutputResource()
     m_raytracingOutputResourceUAVGpuDescriptor = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_resourceManager->GetSRVDescriptorHeap()->GetGPUDescriptorHandleForHeapStart(), m_raytracingOutputResourceUAVDescriptorHeapIndex, m_resourceManager->GetSRVDescriptorSize());
 }
 
+void SelectiveSDF::CreateComputeOutputResource()
+{
+    auto device = m_deviceResources->GetD3DDevice();
+
+    
+    for (int i = 0; i < SDFInstanceCount; i++)
+    {
+        int instanceIdx = m_instances.size() - SDFInstanceCount + i;
+        auto& instance = m_instances[instanceIdx];
+        auto& object = m_objects[instance.objectIndex];
+
+        auto hybridObject = dynamic_cast<HybridObject*>(object.get());
+        if (hybridObject == nullptr)
+        {
+            throw runtime_error("SDF Model Object insertion order is messed up!");
+        }
+
+        UINT sliceCount = hybridObject->GetBrickCount() * 10;
+
+        m_resourceManager->CreateTexture2DArrayUAV(device, &m_brickTextureBuffers[i], sliceCount, DXGI_FORMAT_R32G32B32A32_FLOAT);
+
+        if (i == 0)
+        {
+            m_sdfBricksUAVGpuDescriptor = m_brickTextureBuffers[i].uavGpuDescriptorHandle;
+        }
+    }
+}
+
 //void SelectiveSDF::BuildSpatialHashGrid()
 //{
 //    m_grid.ClearCells();
@@ -1243,13 +1959,14 @@ void SelectiveSDF::BuildSDFObjectsData()
 
         auto hybridObject = static_cast<HybridObject*>(object.get());
 
-        auto& sdfObject = m_sdfObjectsSB[i];
-        sdfObject.world = instance.CalculateTransform();
-        sdfObject.worldI = XMMatrixInverse(nullptr, instance.CalculateTransform());
-        sdfObject.scale = instance.scale;
-        sdfObject.sdfPrimitiveType = hybridObject->GetSDFPrimitiveType();
+        auto& sdfInstance = m_sdfInstancesSB[i];
+        sdfInstance.world = instance.CalculateTransform();
+        sdfInstance.worldI = XMMatrixInverse(nullptr, instance.CalculateTransform());
+        sdfInstance.scale = instance.scale;
+		sdfInstance.objectIndex = instance.objectIndex;
+        //sdfInstance.sdfPrimitiveType = hybridObject->GetSDFPrimitiveType();
 
-        if (sdfObject.sdfPrimitiveType == SDFPrimitive::AModel)
+        /*if (sdfObject.sdfPrimitiveType == SDFPrimitive::AModel)
         {
             sdfObject.sdfTextureIndex = textureIndex;
 
@@ -1257,9 +1974,30 @@ void SelectiveSDF::BuildSDFObjectsData()
             {
                 textureIndex++;
             }
-        }
+        }*/
 
-        sdfObject.instanceIndex = instanceIndex;
+        sdfInstance.instanceIndex = instanceIndex;
+    }
+}
+
+void SelectiveSDF::BuildBVHData()
+{
+    // copy to staging structured buffers
+    for (UINT i = 0; i < m_bvhBuilder.m_nodes.size(); i++) {
+        const auto& node = m_bvhBuilder.m_nodes[i];
+        BVHNodeGPU& n = m_bvhNodesSB[i];
+
+        n.min = node.boundingBox.min;
+        n.max = node.boundingBox.max;
+        n.leftChild = node.leftChild >= 0 ? node.leftChild : UINT_MAX;
+        n.rightChild = node.rightChild >= 0 ? node.rightChild : UINT_MAX;
+        n.firstInstance = node.firstInstance;
+        n.instanceCount = node.instanceCount;
+        n.padding[0] = n.padding[1] = 0;
+    }
+    for (UINT i = 0; i < m_bvhBuilder.m_flatInstanceIndices.size(); i++)
+    {
+        m_instanceIndicesSB[i] = { m_bvhBuilder.m_flatInstanceIndices[i] };
     }
 }
 
@@ -1271,18 +2009,307 @@ void SelectiveSDF::UpdateCameraMatrices()
 	m_sceneCB->projectionI = XMMatrixInverse(nullptr, m_camera.GetProjectionMatrix());
 }
 
-void SelectiveSDF::UpdateSDFObjectsData()
+void SelectiveSDF::UpdateSDFInstancesData()
 {
     auto frameIndex = m_deviceResources->GetCurrentFrameIndex();
 
     for (UINT i = 0; i < SDFInstanceCount; i++)
     {
-        auto& sdfObject = m_sdfObjectsSB[i];
-        auto& instanceData = m_instances[sdfObject.instanceIndex];
-        sdfObject.world = instanceData.CalculateTransform();
-        sdfObject.worldI = XMMatrixInverse(nullptr, instanceData.CalculateTransform());
-        sdfObject.scale = instanceData.scale;
+        auto& sdfInstance = m_sdfInstancesSB[i];
+        auto& instanceData = m_instances[sdfInstance.instanceIndex];
+        sdfInstance.world = instanceData.CalculateTransform();
+        sdfInstance.worldI = XMMatrixInverse(nullptr, instanceData.CalculateTransform());
+        sdfInstance.scale = instanceData.scale;
     }
+}
+void SelectiveSDF::BuildBrickAtlas()
+{
+  //  auto device = m_deviceResources->GetD3DDevice();
+  //  auto commandList = m_deviceResources->GetCommandList();
+  //  auto commandAllocator = m_deviceResources->GetCommandAllocator();
+
+  //  commandList->Reset(commandAllocator, nullptr);
+
+  //  const int BRICK_SIZE = 8;  // 8x8x8 values per brick
+  //  const int SLICES_PER_BRICK = 8;
+
+  //  UINT totalSlices = 0;
+  //  vector<float> textureData;
+
+  //  // First pass: Count total bricks and slices needed
+  //  UINT objectIndex;
+  //  for (UINT i = 0; i < SDFObjectCount; i++)
+  //  {
+  //      objectIndex = m_objects.size() - SDFObjectCount + i;
+  //      auto& object = m_objects[objectIndex];
+
+  //      if (object->GetType() != ObjectType::Hybrid)
+  //      {
+  //          throw runtime_error("Instance insertion order is messed up!");
+  //      }
+
+  //      auto hybridObject = static_cast<HybridObject*>(object.get());
+
+  //      if(hybridObject->GetSDFPrimitiveType() == SDFPrimitive::AModel)
+  //      {
+  //          totalSlices += hybridObject->GetBrickCount() * SLICES_PER_BRICK;
+  //      }
+  //  }
+
+  //  //m_brickTableSB.Create(device, totalSlices / SLICES_PER_BRICK, 1, L"SDF Bricks Structured Buffer");
+
+  //  // Allocate texture data
+  //  textureData.resize(BRICK_SIZE * BRICK_SIZE * totalSlices);
+
+  //  // Second pass: Fill texture data and metadata
+  //  UINT currentSlice = 0;
+  //  UINT currentBrickIdx = 0;
+  //  UINT textureIdx = 0;
+  //  for (UINT i = 0; i < SDFObjectCount; i++)
+  //  {
+  //      objectIndex = m_objects.size() - SDFObjectCount + i;
+  //      auto& object = m_objects[objectIndex];
+
+  //      auto hybridObject = static_cast<HybridObject*>(object.get());
+
+  //      auto primitiveType = hybridObject->GetSDFPrimitiveType();
+  //      //m_sdfObjectsSB[i].primitiveType = primitiveType;
+
+  //      if(primitiveType != SDFPrimitive::AModel)
+  //      {
+  //          continue; // Only process AModel type for brick atlas
+		//}
+
+		////m_sdfObjectsSB[i].textureIndex = textureIdx++;
+  //      m_sdfObjectsSB[i].firstBrickIndex = currentBrickIdx;
+  //      //m_sdfObjectsSB[i].brickCount = 0;
+
+  //      auto objectBricks = hybridObject->GetBricks();
+
+  //      for (const auto& brick : objectBricks) {
+  //          BrickInfo info;
+  //          info.brickCoord = { brick.bx, brick.by, brick.bz };
+
+  //          // Copy brick data to texture
+  //          for (int z = 0; z < BRICK_SIZE; z++) {
+  //              UINT sliceIdx = currentSlice + z;
+  //              UINT sliceStart = sliceIdx * BRICK_SIZE * BRICK_SIZE;
+
+  //              for (int y = 0; y < BRICK_SIZE; y++) {
+  //                  for (int x = 0; x < BRICK_SIZE; x++) {
+  //                      UINT idx = sliceStart + y * BRICK_SIZE + x;
+  //                      textureData[idx] = brick.values[x][y][z];
+  //                  }
+  //              }
+  //          }
+
+  //          currentBrickIdx++;
+  //          currentSlice += SLICES_PER_BRICK;
+  //      }
+  //  }
+
+  //  m_sdfObjectsSB.CopyStagingToGpu(0);
+
+    //m_brickTableSB.CopyStagingToGpu(0);
+
+    // atlas texture resource
+    //{
+    //    // Now create the texture atlas if we have any bricks
+    //    if (totalSlices > 0) {
+    //        // Create texture atlas using your existing pattern
+    //        const UINT sliceWidth = 8;
+    //        const UINT sliceHeight = 8;
+    //        const UINT rowSize = sliceWidth * sizeof(float);
+    //        const UINT alignedRowPitch = (rowSize + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+    //        const UINT slicePitch = alignedRowPitch * sliceHeight;
+    //        const UINT totalSize = slicePitch * totalSlices;
+
+    //        // Prepare padded data
+    //        std::vector<BYTE> paddedUploadData(totalSize, 0);
+
+    //        // Copy texture data with padding
+    //        for (UINT sliceIdx = 0; sliceIdx < totalSlices; sliceIdx++) {
+    //            for (UINT y = 0; y < sliceHeight; y++) {
+    //                const float* srcRow = &textureData[(sliceIdx * sliceHeight + y) * sliceWidth];
+    //                BYTE* dstRow = &paddedUploadData[sliceIdx * slicePitch + y * alignedRowPitch];
+    //                memcpy(dstRow, srcRow, rowSize);
+    //            }
+    //        }
+
+    //        // Using your AllocateTexture pattern but for 2D array
+    //        AllocateTexture(device, {sliceWidth, sliceHeight, totalSlices}, &m_brickAtlasBuffer.resource, D3D12_RESOURCE_DIMENSION_TEXTURE2D);
+    //        AllocateBuffer(
+    //            device,
+    //            D3D12_HEAP_TYPE_UPLOAD,
+    //            totalSize,
+    //            &m_stagingBrickAtlasBuffer,
+    //            D3D12_RESOURCE_STATE_GENERIC_READ,
+    //            D3D12_RESOURCE_FLAG_NONE,
+    //            paddedUploadData.data());
+
+    //        // Prepare subresources
+    //        vector<D3D12_SUBRESOURCE_DATA> subresources(totalSlices);
+    //        for (UINT i = 0; i < totalSlices; i++) {
+    //            subresources[i].pData = &paddedUploadData[i * slicePitch];
+    //            subresources[i].RowPitch = alignedRowPitch;
+    //            subresources[i].SlicePitch = slicePitch;
+    //        }
+
+    //        UpdateSubresources(commandList, m_brickAtlasBuffer.resource.Get(), m_stagingBrickAtlasBuffer.Get(),
+    //            0, 0, totalSlices, subresources.data());
+
+    //        auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+    //            m_brickAtlasBuffer.resource.Get(),
+    //            D3D12_RESOURCE_STATE_COPY_DEST,
+    //            D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+    //        commandList->ResourceBarrier(1, &barrier);
+
+
+    //        m_resourceManager->CreateTexture2DArraySRV(device, &m_brickAtlasBuffer, totalSlices);
+    //    }
+    //}
+
+
+    // Execute to complete the copies
+    m_deviceResources->ExecuteCommandList();
+    m_deviceResources->WaitForGpu();
+
+
+    m_stagingBrickAtlasBuffer.Reset();
+}
+
+void SelectiveSDF::_BuildBrickAtlas()
+{
+ //   auto device = m_deviceResources->GetD3DDevice();
+ //   auto commandList = m_deviceResources->GetCommandList();
+ //   auto commandAllocator = m_deviceResources->GetCommandAllocator();
+
+ //   commandList->Reset(commandAllocator, nullptr);
+
+ //   const int LEAF_SIZE = 8;
+
+ //   UINT totalSlices = 0;
+ //   vector<float> textureData;
+
+ //   UINT objectIndex;
+ //   for (UINT i = 0; i < SDFObjectCount; i++)
+ //   {
+ //       objectIndex = m_objects.size() - SDFObjectCount + i;
+ //       auto& object = m_objects[objectIndex];
+
+ //       if (object->GetType() != ObjectType::Hybrid)
+ //       {
+ //           throw runtime_error("Instance insertion order is messed up!");
+ //       }
+
+ //       auto hybridModelObject = dynamic_cast<AModel*>(object.get());
+ //       if (!hybridModelObject)
+ //       {
+ //           continue; // Only process AModel type for brick atlas
+	//	}
+
+ //       totalSlices += hybridModelObject->GetLeafCount() * LEAF_SIZE;
+ //   }
+
+ //   m_leafNodesSB.Create(device, totalSlices / LEAF_SIZE, 1, L"SDF Leaf Nodes Structured Buffer");
+ //   textureData.resize(LEAF_SIZE * LEAF_SIZE * totalSlices);
+
+ //   // Fill texture data
+	//UINT currentLeafIndex = 0;
+ //   for (UINT i = 0; i < SDFObjectCount; i++) {
+ //       objectIndex = m_objects.size() - SDFObjectCount + i;
+ //       auto hybridModelObject = dynamic_cast<AModel*>(m_objects[objectIndex].get());
+ //       if (!hybridModelObject) continue;
+
+ //       // Get this object's leaves
+ //       auto& leaves = hybridModelObject->GetLeafNodes();
+
+ //       // Copy voxel data to texture array
+ //       for (const auto& leaf : leaves) {
+	//		UINT currentSliceOffset = currentLeafIndex * LEAF_SIZE;
+ //           // Store metadata with texture slice reference
+	//		auto& meta = m_leafNodesSB[currentLeafIndex];
+ //           meta.coord = leaf.coord;
+ //           meta.sliceIndex = currentSliceOffset;
+ //           memcpy(meta.bitmask, leaf.bitmask, sizeof(leaf.bitmask));
+
+ //           // Copy 8x8x8 voxels as 8 slices of 8x8
+ //           for (int z = 0; z < LEAF_SIZE; z++) {
+ //               for (int y = 0; y < LEAF_SIZE; y++) {
+ //                   for (int x = 0; x < LEAF_SIZE; x++) {
+ //                       int voxelIdx = z * 64 + y * 8 + x;
+ //                       int texIdx = (currentSliceOffset + z) * 64 + y * 8 + x;
+ //                       textureData[texIdx] = leaf.voxels[voxelIdx];
+ //                   }
+ //               }
+ //           }
+ //           currentLeafIndex++;
+ //       }
+ //   }
+
+
+ //   // atlas texture resource
+ //   {
+ //       // Now create the texture atlas if we have any bricks
+ //       if (totalSlices > 0) {
+ //           // Create texture atlas using your existing pattern
+ //           const UINT sliceWidth = LEAF_SIZE;
+ //           const UINT sliceHeight = LEAF_SIZE;
+ //           const UINT rowSize = sliceWidth * sizeof(float);
+ //           const UINT alignedRowPitch = (rowSize + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+ //           const UINT slicePitch = alignedRowPitch * sliceHeight;
+ //           const UINT totalSize = slicePitch * totalSlices;
+
+ //           // Prepare padded data
+ //           std::vector<BYTE> paddedUploadData(totalSize, 0);
+
+ //           // Copy texture data with padding
+ //           for (UINT sliceIdx = 0; sliceIdx < totalSlices; sliceIdx++) {
+ //               for (UINT y = 0; y < sliceHeight; y++) {
+ //                   const float* srcRow = &textureData[(sliceIdx * sliceHeight + y) * sliceWidth];
+ //                   BYTE* dstRow = &paddedUploadData[sliceIdx * slicePitch + y * alignedRowPitch];
+ //                   memcpy(dstRow, srcRow, rowSize);
+ //               }
+ //           }
+
+ //           // Using your AllocateTexture pattern but for 2D array
+ //           AllocateTexture(device, {sliceWidth, sliceHeight, totalSlices}, &m_brickAtlasBuffer.resource, D3D12_RESOURCE_DIMENSION_TEXTURE2D);
+ //           AllocateBuffer(
+ //               device,
+ //               D3D12_HEAP_TYPE_UPLOAD,
+ //               totalSize,
+ //               &m_stagingBrickAtlasBuffer,
+ //               D3D12_RESOURCE_STATE_GENERIC_READ,
+ //               D3D12_RESOURCE_FLAG_NONE,
+ //               paddedUploadData.data());
+
+ //           // Prepare subresources
+ //           vector<D3D12_SUBRESOURCE_DATA> subresources(totalSlices);
+ //           for (UINT i = 0; i < totalSlices; i++) {
+ //               subresources[i].pData = &paddedUploadData[i * slicePitch];
+ //               subresources[i].RowPitch = alignedRowPitch;
+ //               subresources[i].SlicePitch = slicePitch;
+ //           }
+
+ //           UpdateSubresources(commandList, m_brickAtlasBuffer.resource.Get(), m_stagingBrickAtlasBuffer.Get(),
+ //               0, 0, totalSlices, subresources.data());
+
+ //           auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+ //               m_brickAtlasBuffer.resource.Get(),
+ //               D3D12_RESOURCE_STATE_COPY_DEST,
+ //               D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE);
+ //           commandList->ResourceBarrier(1, &barrier);
+
+
+ //           m_resourceManager->CreateTexture2DArraySRV(device, &m_brickAtlasBuffer, totalSlices);
+ //       }
+ //   }
+
+ //   m_deviceResources->ExecuteCommandList();
+ //   m_deviceResources->WaitForGpu();
+
+
+ //   m_stagingBrickAtlasBuffer.Reset();
 }
 
 //void SelectiveSDF::BuildHashGridData()
