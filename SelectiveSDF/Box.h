@@ -10,7 +10,7 @@ public:
 	Box() : HybridObject(SDFPrimitive::Enum::Box, 1) {};
 
 	virtual void ExtractNarrowBand() override {};
-	virtual void ExtractBricks() override {};
+	virtual void ExtractBricks() override;
 
 protected:
 	virtual void BuildTriangleGeometry(ID3D12Device* device, vector<Index>& indices, vector<Vertex>& vertices) override;

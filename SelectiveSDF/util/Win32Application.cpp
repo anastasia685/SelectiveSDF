@@ -2,6 +2,9 @@
 #include "Win32Application.h"
 #include "DXSampleHelper.h"
 
+#include "imgui_impl_win32.h"
+#include "imgui_impl_dx12.h"
+
 HWND Win32Application::m_hwnd = nullptr;
 bool Win32Application::m_fullscreenMode = false;
 RECT Win32Application::m_windowRect;
@@ -9,7 +12,7 @@ using Microsoft::WRL::ComPtr;
 
 int Win32Application::Run(DXSample* pSample, HINSTANCE hInstance, int nCmdShow)
 {
-    //try
+    try
     {
         // Parse the command line parameters
         int argc;
@@ -44,6 +47,14 @@ int Win32Application::Run(DXSample* pSample, HINSTANCE hInstance, int nCmdShow)
             hInstance,
             pSample);
 
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGuiIO& io = ImGui::GetIO();
+        io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+        ImGui::StyleColorsDark();
+        ImGui_ImplWin32_Init(m_hwnd);
+
+
         // Initialize the sample. OnInit is defined in each child-implementation of DXSample
         pSample->OnInit();
 
@@ -63,10 +74,14 @@ int Win32Application::Run(DXSample* pSample, HINSTANCE hInstance, int nCmdShow)
 
         pSample->OnDestroy();
 
+        ImGui_ImplDX12_Shutdown();
+        ImGui_ImplWin32_Shutdown();
+        ImGui::DestroyContext();
+
         // Return this part of the WM_QUIT message to Windows.
         return static_cast<char>(msg.wParam);
     }
-    /*catch (std::exception& e)
+    catch (std::exception& e)
     {
         OutputDebugString(L"Application hit a problem: ");
         OutputDebugStringA(e.what());
@@ -74,7 +89,7 @@ int Win32Application::Run(DXSample* pSample, HINSTANCE hInstance, int nCmdShow)
 
         pSample->OnDestroy();
         return EXIT_FAILURE;
-    }*/
+    }
 }
 
 // Convert a styled window into a fullscreen borderless window and back again.
@@ -170,9 +185,15 @@ void Win32Application::SetWindowZorderToTopMost(bool setToTopMost)
         SWP_FRAMECHANGED | SWP_NOACTIVATE);
 }
 
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
 // Main message handler for the sample.
 LRESULT CALLBACK Win32Application::WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (ImGui_ImplWin32_WndProcHandler(hWnd, message, wParam, lParam))
+        return true;
+
     DXSample* pSample = reinterpret_cast<DXSample*>(GetWindowLongPtr(hWnd, GWLP_USERDATA));
 
     switch (message)
@@ -188,14 +209,54 @@ LRESULT CALLBACK Win32Application::WindowProc(HWND hWnd, UINT message, WPARAM wP
     case WM_KEYDOWN:
         if (pSample)
         {
-            pSample->OnKeyDown(static_cast<UINT8>(wParam));
+            if (!ImGui::GetIO().WantCaptureKeyboard)
+            {
+                pSample->OnKeyDown(static_cast<UINT8>(wParam));
+            }
         }
         return 0;
 
     case WM_KEYUP:
         if (pSample)
         {
-            pSample->OnKeyUp(static_cast<UINT8>(wParam));
+            if (!ImGui::GetIO().WantCaptureKeyboard)
+            {
+                pSample->OnKeyUp(static_cast<UINT8>(wParam));
+            }
+        }
+        return 0;
+
+    case WM_ACTIVATE:
+    case WM_INPUT:
+    case WM_MOUSEWHEEL:
+    case WM_XBUTTONDOWN:
+    case WM_XBUTTONUP:
+    case WM_MOUSEHOVER:
+        if (!ImGui::GetIO().WantCaptureMouse)
+        {
+            // process these messages in the sample
+        }
+        return 0;
+
+    case WM_LBUTTONDOWN:
+        if (pSample)
+        {
+            if (!ImGui::GetIO().WantCaptureMouse)
+            {
+                pSample->OnLeftButtonDown(static_cast<UINT8>(wParam), static_cast<UINT32>(lParam));
+            }
+        }
+        return 0;
+    case WM_LBUTTONUP:
+        if (pSample)
+        {
+            pSample->OnLeftButtonUp(static_cast<UINT8>(wParam), static_cast<UINT32>(lParam));
+        }
+        return 0;
+    case WM_MOUSEMOVE:
+        if (pSample)
+        {
+            pSample->OnMouseMove(static_cast<UINT8>(wParam), static_cast<UINT32>(lParam));
         }
         return 0;
 
@@ -252,31 +313,6 @@ LRESULT CALLBACK Win32Application::WindowProc(HWND hWnd, UINT message, WPARAM wP
             pSample->OnDisplayChanged();
         }
         return 0;
-
-    case WM_MOUSEMOVE:
-        if (pSample && static_cast<UINT8>(wParam) == MK_LBUTTON)
-        {
-            UINT x = LOWORD(lParam);
-            UINT y = HIWORD(lParam);
-            pSample->OnMouseMove(x, y);
-        }
-        return 0;
-
-    case WM_LBUTTONDOWN:
-    {
-        UINT x = LOWORD(lParam);
-        UINT y = HIWORD(lParam);
-        pSample->OnLeftButtonDown(x, y);
-    }
-    return 0;
-
-    case WM_LBUTTONUP:
-    {
-        UINT x = LOWORD(lParam);
-        UINT y = HIWORD(lParam);
-        pSample->OnLeftButtonUp(x, y);
-    }
-    return 0;
 
     case WM_DESTROY:
         PostQuitMessage(0);

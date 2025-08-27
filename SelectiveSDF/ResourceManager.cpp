@@ -72,6 +72,28 @@ UINT ResourceManager::CreateBufferSRV(ID3D12Device* device, BufferHelper::D3DBuf
     buffer->srvGpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
     return descriptorIndex;
 }
+UINT ResourceManager::CreateBufferUAV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer, UINT elementNumber, UINT elementSize)
+{
+    D3D12_UNORDERED_ACCESS_VIEW_DESC uavDesc = {};
+    uavDesc.ViewDimension = D3D12_UAV_DIMENSION_BUFFER;
+    uavDesc.Buffer.NumElements = elementNumber;
+    if (elementSize == 0)
+    {
+        uavDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+        uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_RAW;
+        uavDesc.Buffer.StructureByteStride = 0;
+    }
+    else
+    {
+        uavDesc.Format = DXGI_FORMAT_UNKNOWN;
+        uavDesc.Buffer.Flags = D3D12_BUFFER_UAV_FLAG_NONE;
+        uavDesc.Buffer.StructureByteStride = elementSize;
+    }
+    UINT descriptorIndex = AllocateDescriptor(&buffer->uavCpuDescriptorHandle);
+    device->CreateUnorderedAccessView(buffer->resource.Get(), nullptr, &uavDesc, buffer->uavCpuDescriptorHandle);
+    buffer->uavGpuDescriptorHandle = CD3DX12_GPU_DESCRIPTOR_HANDLE(m_srvDescriptorHeap->GetGPUDescriptorHandleForHeapStart(), descriptorIndex, m_srvDescriptorSize);
+    return descriptorIndex;
+}
 
 UINT ResourceManager::CreateTexture3DSRV(ID3D12Device* device, BufferHelper::D3DBuffer* buffer)
 {

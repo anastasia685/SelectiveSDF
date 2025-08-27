@@ -27,8 +27,12 @@ public:
     vector<BVHNode> m_nodes;
     vector<UINT> m_flatInstanceIndices;
 
-    void Build(const vector<ObjectInstance>& instances, UINT offset, size_t maxLeafSize = 4) 
+    void Build(const vector<ObjectInstance>& instances, UINT offset, size_t maxLeafSize = 1) 
     {
+        m_nodes.clear();
+		m_flatInstanceIndices.clear();
+		m_instances.clear();
+
         UINT count = instances.size() - offset;
         m_instances.resize(count);
 

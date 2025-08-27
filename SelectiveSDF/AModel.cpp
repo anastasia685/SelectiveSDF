@@ -42,7 +42,7 @@ inline BlockInfo AnalyzeBlock(const vector<float>& sdfData, XMUINT3 resolution, 
 
 void AModel::BuildSDF(ID3D12Device* device, ID3D12GraphicsCommandList* commandList)
 {
-	const XMUINT3 resolution = { 64, 64, 64 };
+	const XMUINT3 resolution = { m_sdfResolution, m_sdfResolution, m_sdfResolution };
 	vector<float> sdfData = LoadSDFTexture("res/sdfs/" + m_fileName + ".raw", resolution);
 
 
@@ -62,7 +62,16 @@ void AModel::BuildSDF(ID3D12Device* device, ID3D12GraphicsCommandList* commandLi
 		}
 	}
 
-	AllocateTexture(device, resolution, &m_sdfTextureBuffer.resource);
+	AllocateTexture(
+		device, 
+		resolution, 
+		&m_sdfTextureBuffer.resource,
+		DXGI_FORMAT_R32_FLOAT,
+		D3D12_RESOURCE_DIMENSION_TEXTURE3D,
+		D3D12_RESOURCE_STATE_COPY_DEST, 
+		D3D12_RESOURCE_FLAG_NONE,
+		L"Dense SDF Texture Buffer"
+	);
 	AllocateBuffer(
 		device,
 		D3D12_HEAP_TYPE_UPLOAD,
@@ -70,7 +79,9 @@ void AModel::BuildSDF(ID3D12Device* device, ID3D12GraphicsCommandList* commandLi
 		&m_stagingSdfTextureBuffer,
 		D3D12_RESOURCE_STATE_GENERIC_READ,
 		D3D12_RESOURCE_FLAG_NONE,
-		paddedUploadData.data());
+		paddedUploadData.data(),
+		L"Dense SDF Texture Staging Buffer"
+	);
 
 	D3D12_SUBRESOURCE_DATA textureSubresource = {};
 	textureSubresource.pData = paddedUploadData.data();
@@ -390,41 +401,15 @@ void AModel::BuildAABBs(ID3D12Device* device, vector<D3D12_RAYTRACING_AABB>& aab
 	);
 	return;*/
 
-	const int GRID_SIZE = 64;
+	const int GRID_SIZE = m_sdfResolution;
 	const float WORLD_SIZE = 1.0f;  // -0.5 to +0.5
 	const float VOXEL_SIZE = WORLD_SIZE / GRID_SIZE;
 	const float HALF_WORLD = WORLD_SIZE * 0.5f;
 
-	//m_aabbCount = GRID_SIZE * GRID_SIZE * GRID_SIZE;
-	//aabbs.clear();
-	//aabbs.reserve(m_aabbCount);
-
-	//for (int z = 0; z < GRID_SIZE; z++) {
-	//	for (int y = 0; y < GRID_SIZE; y++) {
-	//		for (int x = 0; x < GRID_SIZE; x++) {
-	//			float worldX = (x * VOXEL_SIZE) - HALF_WORLD;
-	//			float worldY = (y * VOXEL_SIZE) - HALF_WORLD;
-	//			float worldZ = (z * VOXEL_SIZE) - HALF_WORLD;
-
-	//			aabbs.push_back({
-	//				worldX, worldY, worldZ,
-	//				worldX + VOXEL_SIZE, worldY + VOXEL_SIZE, worldZ + VOXEL_SIZE
-	//				});
-	//		}
-	//	}
-	//}
-
-
-	//const int BRICK_SIZE = 7;
-	//m_aabbCount = static_cast<UINT>(m_surfaceBricks.size());
 	const int BRICK_SIZE = 9;
 	m_aabbCount = static_cast<UINT>(m_brickMeta.size());
 	for (const auto& brick : m_brickMeta) // m_surfaceBricks 
 	{
-		/*float worldX = (brick.bx * BRICK_SIZE * VOXEL_SIZE) - HALF_WORLD;
-		float worldY = (brick.by * BRICK_SIZE * VOXEL_SIZE) - HALF_WORLD;
-		float worldZ = (brick.bz * BRICK_SIZE * VOXEL_SIZE) - HALF_WORLD;*/
-
 		UINT brickX, brickY, brickZ;
 		UnpackBrickCoord(brick.packedCoord, brickX, brickY, brickZ);
 
@@ -439,22 +424,6 @@ void AModel::BuildAABBs(ID3D12Device* device, vector<D3D12_RAYTRACING_AABB>& aab
 			worldZ + BRICK_SIZE * VOXEL_SIZE
 		});
 	}
-	return;
-
-
-	/*m_aabbCount = static_cast<UINT>(m_surfaceVoxels.size());
-	aabbs.reserve(m_aabbCount);
-
-	for (const auto& voxel : m_surfaceVoxels) {
-		float localX = (voxel.x * VOXEL_SIZE) - HALF_WORLD;
-		float localY = (voxel.y * VOXEL_SIZE) - HALF_WORLD;
-		float localZ = (voxel.z * VOXEL_SIZE) - HALF_WORLD;
-
-		aabbs.push_back({
-			localX, localY, localZ,
-			localX + VOXEL_SIZE, localY + VOXEL_SIZE, localZ + VOXEL_SIZE
-			});
-	}*/
 }
 
 void AModel::BuildVDBSBS()
@@ -714,8 +683,6 @@ void AModel::ExtractNarrowBand()
 			}
 		}
 	}
-
-	//BuildSBS();
 }
 inline uint32_t PackBrickCoord(uint32_t x, uint32_t y, uint32_t z)
 {
@@ -723,13 +690,14 @@ inline uint32_t PackBrickCoord(uint32_t x, uint32_t y, uint32_t z)
 }
 void AModel::ExtractBricks()
 {
-	const int GRID_SIZE = 64; // Data points (63x63x63 voxels)
+	const int GRID_SIZE = m_sdfResolution; // Data points (63x63x63 voxels)
 	const int BRICK_VOXEL_SIZE = 9;  // Spatial voxel coverage per brick
 	const int BRICK_COUNT = (GRID_SIZE - 1 + BRICK_VOXEL_SIZE - 1) / BRICK_VOXEL_SIZE; // (voxelCount + (voxelPerBrickCount - 1)) / voxelPerBrickCount
-	const float PADDING_THRESHOLD = 8 / 64.0f;
+	//const float PADDING_THRESHOLD = 8.0f / static_cast<float>(GRID_SIZE);
+	const float PADDING_THRESHOLD = 0.1f;
 	const float FRACTION_THRESHOLD = 0.2f;
 
-	vector<float> sdfData = LoadSDFTexture("res/sdfs/" + m_fileName + ".raw", { GRID_SIZE, GRID_SIZE, GRID_SIZE });
+	vector<float> sdfData = LoadSDFTexture("res/sdfs/" + m_fileName + ".raw", { m_sdfResolution, m_sdfResolution, m_sdfResolution });
 
 	auto sampleSDF = [&](int x, int y, int z) -> float {
 		x = clamp(x, 0, GRID_SIZE - 1);
@@ -775,7 +743,7 @@ void AModel::ExtractBricks()
 							{
 								hasSurface = true;
 							}
-							if (min(abs(minVal), abs(maxVal)) < PADDING_THRESHOLD)
+							if (minVal >= 0.0f && minVal < PADDING_THRESHOLD)
 							{
 								nearSurfaceCount++;
 							}
@@ -800,92 +768,6 @@ void AModel::ExtractBricks()
 					brickMeta.sliceStart = static_cast<UINT>(m_brickMeta.size()) * (BRICK_VOXEL_SIZE + 1);
 
 					m_brickMeta.push_back(brickMeta);
-				}
-			}
-		}
-	}
-}
-
-void AModel::_ExtractBricks()
-{
-	const int GRID_SIZE = 64;
-	const int BRICK_SIZE = 7;  // 7x7x7 voxels per brick
-	const int BRICK_COUNT = (GRID_SIZE + BRICK_SIZE - 1) / BRICK_SIZE;  // Round up
-
-	vector<float> sdfData = LoadSDFTexture("res/sdfs/" + m_fileName + ".raw", { GRID_SIZE, GRID_SIZE, GRID_SIZE });
-
-	auto sampleSDF = [&](int x, int y, int z) -> float {
-		x = clamp(x, 0, GRID_SIZE - 1);
-		y = clamp(y, 0, GRID_SIZE - 1);
-		z = clamp(z, 0, GRID_SIZE - 1);
-		return sdfData[z * GRID_SIZE * GRID_SIZE + y * GRID_SIZE + x];
-	};
-
-	// Iterate through potential brick positions
-	for (UINT bz = 0; bz < BRICK_COUNT; bz++) {
-		for (UINT by = 0; by < BRICK_COUNT; by++) {
-			for (UINT bx = 0; bx < BRICK_COUNT; bx++) {
-				bool hasSurface = false;
-
-				// Check if any voxel in this brick contains surface
-				int voxelStartX = bx * BRICK_SIZE;
-				int voxelStartY = by * BRICK_SIZE;
-				int voxelStartZ = bz * BRICK_SIZE;
-
-				// Check 7x7x7 voxels (need 8x8x8 corner values)
-				for (int z = 0; z < BRICK_SIZE && !hasSurface; z++) {
-					for (int y = 0; y < BRICK_SIZE && !hasSurface; y++) {
-						for (int x = 0; x < BRICK_SIZE && !hasSurface; x++) {
-							int gx = voxelStartX + x;
-							int gy = voxelStartY + y;
-							int gz = voxelStartZ + z;
-
-							if (gx < GRID_SIZE - 1 && gy < GRID_SIZE - 1 && gz < GRID_SIZE - 1) {
-								// Sample 8 corners of this voxel
-								float minVal = FLT_MAX, maxVal = -FLT_MAX;
-								for (int cz = 0; cz <= 1; cz++) {
-									for (int cy = 0; cy <= 1; cy++) {
-										for (int cx = 0; cx <= 1; cx++) {
-											float val = sampleSDF(gx + cx, gy + cy, gz + cz);
-											minVal = min(minVal, val);
-											maxVal = max(maxVal, val);
-										}
-									}
-								}
-
-								if (minVal <= 0.0f && maxVal >= 0.0f) 
-								{
-									hasSurface = true;
-								}
-							}
-						}
-					}
-				}
-
-				if (hasSurface) {
-					SurfaceBrick brick;
-					brick.bx = bx;
-					brick.by = by;
-					brick.bz = bz;
-
-					// Fill the 8x8x8 values
-					for (int z = 0; z <= BRICK_SIZE; z++) {
-						for (int y = 0; y <= BRICK_SIZE; y++) {
-							for (int x = 0; x <= BRICK_SIZE; x++) {
-								int gx = voxelStartX + x;
-								int gy = voxelStartY + y;
-								int gz = voxelStartZ + z;
-
-								brick.values[x][y][z] = sampleSDF(
-									clamp(gx, 0, GRID_SIZE - 1),
-									clamp(gy, 0, GRID_SIZE - 1),
-									clamp(gz, 0, GRID_SIZE - 1)
-								);
-							}
-						}
-					}
-
-					m_surfaceBricks.push_back(brick);
 				}
 			}
 		}

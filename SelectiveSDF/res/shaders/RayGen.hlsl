@@ -38,6 +38,7 @@ float4 TraceRadianceRay(Ray ray, uint currentRayRecursionDepth, RaytracingAccele
     TraceRay(g_scene,
         RAY_FLAG_FORCE_OPAQUE,
         0x01 | 0x02,
+        //0x04,
         0,
         0,
         0,

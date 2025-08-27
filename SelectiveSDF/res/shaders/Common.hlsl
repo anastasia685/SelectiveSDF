@@ -30,6 +30,13 @@ struct Triangle
 #define INDEX_SIZE 4
 #define VERTEX_SIZE 24
 
+
+struct TraceResult
+{
+    bool hit;
+    float t;
+    float3 normal;
+};
 struct SceneConstantBuffer
 {
     float4x4 viewI;
@@ -38,6 +45,10 @@ struct SceneConstantBuffer
     uint sdfObjectCount;
     uint triangleInstanceCount;
     uint sdfInstanceCount;
+    uint frameIndex;
+    uint surfaceMode;
+    uint colorMode;
+    uint padding;
 };
 struct SDFObjectData
 {
@@ -123,7 +134,8 @@ float3 BackgroundColor()
     float2 dims = float2(DispatchRaysDimensions().xy);
 
     float ramp = launchIndex.y / dims.y;
-    return float3(0.0f, 0.2f, 0.7f - 0.3f * ramp);
+    //return float3(0.0f, 0.2f, 0.7f - 0.3f * ramp);
+    return float3(0.7f, 0.7f, 0.7f) - 0.3f * ramp;
 }
 
 Triangle TriangleData(uint instanceID, uint triangleIndex, ByteAddressBuffer indexVertexBuffers[])
@@ -161,4 +173,16 @@ float3 Barycentrics(Triangle tri, float3 p)
     float u = 1.0f - v - w;
     
     return float3(u, v, w);
+}
+
+float4 Phong(float3 normal, float3 color)
+{
+    float3 diffuseColor = float3(1, 1, 1);
+    float3 toLight = float3(0, 1, 0.5);
+    toLight = normalize(toLight);
+    
+    float intensity = saturate(dot(normal, toLight));
+    
+    float3 finalColor = diffuseColor * intensity * color;
+    return float4(finalColor, 1.0f);
 }

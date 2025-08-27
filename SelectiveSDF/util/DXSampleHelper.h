@@ -208,7 +208,7 @@ inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName, LPCWSTR entryPoint = L""
     LPCWSTR* arguments = nullptr;
     UINT32 argumentsSize = 0;
 
-//#ifdef DEBUG
+#ifdef DEBUG
     std::vector<LPCWSTR> argList = {
         L"-Zi",            // Debug info
         L"-Od",            // Disable optimizations
@@ -217,7 +217,7 @@ inline IDxcBlob* CompileShaderLibrary(LPCWSTR fileName, LPCWSTR entryPoint = L""
     };
     arguments = argList.data();
     argumentsSize = static_cast<UINT32>(argList.size());
-//#endif
+#endif
 
     // Compile
     IDxcOperationResult* pResult;

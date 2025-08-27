@@ -25,6 +25,10 @@ namespace ConstantBufferTypes
         UINT sdfObjectCount;
         UINT triangleInstanceCount;
         UINT sdfInstanceCount;
+		UINT32 frameIndex;
+        UINT surfaceMode;
+        UINT colorMode;
+		UINT padding;
     };
 
     struct ComputeConstantBuffer
@@ -35,6 +39,8 @@ namespace ConstantBufferTypes
         UINT sdfObjectCount;
         UINT triangleInstanceCount;
         UINT sdfInstanceCount;
+        UINT32 frameIndex;
+        UINT padding[3];
 	};
 
     struct ObjectConstantBuffer

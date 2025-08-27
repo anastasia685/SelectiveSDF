@@ -41,12 +41,13 @@ typedef UINT VoxelPacked;
 class HybridObject : public Object
 {
 	public:
-		HybridObject(SDFPrimitive::Enum sdfPrimitiveType = SDFPrimitive::Enum::Box, UINT hitGroupIndex = 1) : 
-			Object(ObjectType::Hybrid), m_sdfPrimitiveType(sdfPrimitiveType), m_hitGroupIndex(hitGroupIndex) {};
+		HybridObject(SDFPrimitive::Enum sdfPrimitiveType = SDFPrimitive::Enum::Box, UINT hitGroupIndex = 1, UINT sdfResolution = 64) :
+			Object(ObjectType::Hybrid), m_sdfPrimitiveType(sdfPrimitiveType), m_hitGroupIndex(hitGroupIndex), m_sdfResolution(sdfResolution) {};
 
 		SDFPrimitive::Enum GetSDFPrimitiveType() const { return m_sdfPrimitiveType; }
 		UINT GetHitGroupIndex() const { return m_hitGroupIndex; }
 		UINT GetAAbbCount() const { return m_aabbCount; }
+		UINT GetSDFResolution() const { return m_sdfResolution; };
 		BufferHelper::D3DBuffer& GetAABBBuffer() { return m_aabbBuffer; };
 		UINT GetCandidateVoxelCount() const { return static_cast<UINT>(m_surfaceVoxels.size()); }
 		vector<SurfaceVoxel>& GetCandidateVoxels() { return m_surfaceVoxels; }
@@ -67,7 +68,7 @@ class HybridObject : public Object
 			vector<D3D12_RAYTRACING_AABB> aabbs;
 
 			BuildTriangleGeometry(device, indices, vertices);
-			ExtractNarrowBand();
+			//ExtractNarrowBand();
 			ExtractBricks();
 			BuildAABBs(device, aabbs);
 
@@ -127,8 +128,9 @@ protected:
 	ComPtr<ID3D12Resource> m_stagingAabbBuffer;
 
 	SDFPrimitive::Enum m_sdfPrimitiveType;
+	UINT m_sdfResolution;
 
-	UINT m_aabbCount = 0; // number of AABBs in the buffer, used for procedural geometry
+	UINT m_aabbCount = 0;
 
 	vector<SurfaceVoxel> m_surfaceVoxels;
 	vector<SurfaceBrick> m_surfaceBricks;

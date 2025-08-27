@@ -56,6 +56,7 @@ private:
     ComPtr<ID3D12RootSignature> m_raytracingLocalRootSignature[LocalRootSignature::Type::Count];
 
 	ComPtr<ID3D12RootSignature> m_computeGlobalRootSignature;
+    ComPtr<ID3D12CommandSignature> m_computeDispatchSignature;
 
     // Geometry
 	vector<unique_ptr<Object>> m_objects;
@@ -100,6 +101,11 @@ private:
 
     StructuredBuffer<BrickMeta> m_brickMetaSB;
     vector<BufferHelper::D3DBuffer> m_brickTextureBuffers;
+    ComPtr<ID3D12Resource> m_brickMaskBuffer/*, m_brickVisibilityBuffer*/;
+    BufferHelper::D3DBuffer m_filteredBrickBuffer, m_dispatchArgsBuffer;
+
+    //TEMPORARY
+	BufferHelper::D3DBuffer m_brickVisibilityBuffer;
 
     BufferHelper::D3DBuffer m_brickAtlasBuffer;
     ComPtr<ID3D12Resource> m_stagingBrickAtlasBuffer;
@@ -150,12 +156,14 @@ private:
 	void Raytrace();
 	void Compute();
     void CopyRaytracingOutputToBackbuffer();
+	void RenderUI();
 
 
 	void CreateAuxilaryDeviceResources();
     void CreateRaytracingInterfaces();
     void CreateRootSignatures();
 	void CreateComputeRootSignatures();
+    void CreateComputeDispatchSignature();
     void SerializeAndCreateRaytracingRootSignature(D3D12_ROOT_SIGNATURE_DESC& desc, ComPtr<ID3D12RootSignature>* rootSig);
 	void CreateRaytracingPipelineStateObject();
     void CreateComputePipelineStateObject();
@@ -177,8 +185,6 @@ private:
 	void CreateRaytracingOutputResource();
 	void CreateComputeOutputResource();
 
-    //void BuildSpatialHashGrid();
-    void BuildSDfBVH();
     void CalculateFrameStats();
 
     // Application state
@@ -186,9 +192,54 @@ private:
     void BuildBVHData();
     void UpdateCameraMatrices();
     void UpdateSDFInstancesData();
-    //void BuildHashGridData();
-    void BuildBrickAtlas();
-	void _BuildBrickAtlas();
+
+
+    void CreateImGuiHeap();
+    ComPtr<ID3D12DescriptorHeap> m_imguiHeap;
+
+public:
+    struct ImGuiDescriptorAllocator
+    {
+        ID3D12DescriptorHeap* heap = nullptr;
+        UINT descriptorSize = 0;
+        UINT capacity = 0;
+        std::vector<bool> used;
+
+        void Init(ID3D12Device* device, ID3D12DescriptorHeap* h, UINT count)
+        {
+            heap = h;
+            descriptorSize = device->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+            capacity = count;
+            used.resize(count, false);
+        }
+
+        bool Alloc(D3D12_CPU_DESCRIPTOR_HANDLE* outCpu, D3D12_GPU_DESCRIPTOR_HANDLE* outGpu)
+        {
+            for (UINT i = 0; i < capacity; ++i)
+            {
+                if (!used[i])
+                {
+                    used[i] = true;
+                    auto baseCpu = heap->GetCPUDescriptorHandleForHeapStart();
+                    auto baseGpu = heap->GetGPUDescriptorHandleForHeapStart();
+                    baseCpu.ptr += SIZE_T(i) * descriptorSize;
+                    baseGpu.ptr += SIZE_T(i) * descriptorSize;
+                    *outCpu = baseCpu;
+                    *outGpu = baseGpu;
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        void Free(D3D12_CPU_DESCRIPTOR_HANDLE cpu, D3D12_GPU_DESCRIPTOR_HANDLE gpu)
+        {
+            auto base = heap->GetCPUDescriptorHandleForHeapStart().ptr;
+            UINT index = (cpu.ptr - base) / descriptorSize;
+            if (index < capacity)
+                used[index] = false;
+        }
+    };
 };
 
 inline bool CheckRaytracingSupport(IDXGIAdapter1* adapter)

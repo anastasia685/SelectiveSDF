@@ -8,10 +8,15 @@ namespace Compute {
             enum Enum {
                 //OutputAABBs = 0,
                 OutputBrickTextures = 0,
+                OutputBrickMask,
                 //CandidateVoxels,
                 CandidateBricks,
 				SDFObjectsData,
 				SDFInstancesData,
+                BVH,
+				InstanceIndices,
+                /*BrickVisibility,
+                FilteredBricks,*/
                 SDFTextures,
 				ComputeConstant,
                 Count
@@ -28,21 +33,17 @@ namespace GlobalRootSignature {
             AccelerationStructure,
             SceneConstant,
             VertexBuffers,
-            SDFVoxels,
-            //SDFLeafAtlas,
-            //SDFLeafNodes,
-            //SDFInternal1Nodes,
-            //SDFInternal2Nodes,
-            //SDFRootNodes,
             SDFBricks,
             SDFTextures,
             SDFBrickTextures,
-            //BrickAtlas,
+            SDFBrickMask,
             SDFObjectsData,
             SDFInstancesData,
-            //BrickTable,
             BVH,
             InstanceIndices,
+            /*BrickVisibility,
+            FilteredBricks,
+            DispatchArgs,*/
             Count
         };
     }

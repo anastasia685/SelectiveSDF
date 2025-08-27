@@ -87,8 +87,8 @@ protected:
 
 		heapType = D3D12_HEAP_TYPE_DEFAULT;
 		initialResourceState = D3D12_RESOURCE_STATE_COPY_DEST;
-		AllocateBuffer(device, heapType, indexBufferSize, &m_indexBuffer.resource, initialResourceState, resourceFlags, nullptr);
-		AllocateBuffer(device, heapType, m_vertexCount * sizeof(Vertex), &m_vertexBuffer.resource, initialResourceState, resourceFlags, nullptr);
+		AllocateBuffer(device, heapType, indexBufferSize, &m_indexBuffer.resource, initialResourceState, resourceFlags, nullptr, L"Index Buffer");
+		AllocateBuffer(device, heapType, m_vertexCount * sizeof(Vertex), &m_vertexBuffer.resource, initialResourceState, resourceFlags, nullptr, L"Vertex Buffer");
 
 
 		commandList->CopyBufferRegion(m_indexBuffer.resource.Get(), 0, m_stagingIndexBuffer.Get(), 0, indexBufferSize);

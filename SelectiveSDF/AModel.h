@@ -33,7 +33,7 @@ struct LeafNodeData {
 class AModel : public HybridObject
 {
 public:
-	AModel(const string& fileName) : HybridObject(SDFPrimitive::Enum::AModel, 2), m_fileName(string(fileName)), m_sdfResolution({64, 64, 64}) {};
+	AModel(const string& fileName, UINT sdfResolution = 64) : HybridObject(SDFPrimitive::Enum::AModel, 2, sdfResolution), m_fileName(string(fileName)) {};
 	void BuildSDF(ID3D12Device* device, ID3D12GraphicsCommandList* commandList);
 	void BuildSVS(ID3D12Device* device, ID3D12GraphicsCommandList* commandList);
 
@@ -46,11 +46,11 @@ public:
 	virtual void ReleaseStagingBuffers() override
 	{
 		m_stagingSdfVoxelBuffer.Reset();
+		m_stagingSdfTextureBuffer.Reset();
 		Object::ReleaseStagingBuffers();
 	};
-	BufferHelper::D3DBuffer& GetSDFVoxelBuffer() { return m_sdfVoxelBuffer; };
 	BufferHelper::D3DBuffer& GetSDFTextureBuffer() { return m_sdfTextureBuffer; };
-	XMUINT3 GetSDFResolution() const { return m_sdfResolution; };
+	BufferHelper::D3DBuffer& GetSDFVoxelBuffer() { return m_sdfVoxelBuffer; };
 
 	UINT GetLeafCount() const { return static_cast<UINT>(m_leafLevel.size()); }
 	UINT GetInternal1Count() const { return static_cast<UINT>(m_internalLevel1.size()); }
@@ -67,18 +67,18 @@ public:
 	virtual void ExtractBricks() override;
 
 	void ExtractBricksVDB();
-	void _ExtractBricks();
 
 protected:
 	virtual void BuildTriangleGeometry(ID3D12Device* device, vector<Index>& indices, vector<Vertex>& vertices) override;
 	virtual void BuildAABBs(ID3D12Device* device, vector<D3D12_RAYTRACING_AABB>& aabbs) override;
 
 private:
-	BufferHelper::D3DBuffer m_sdfVoxelBuffer, m_sdfTextureBuffer;
-	ComPtr<ID3D12Resource> m_stagingSdfVoxelBuffer, m_stagingSdfTextureBuffer;
+	BufferHelper::D3DBuffer m_sdfTextureBuffer, m_sdfVoxelBuffer;
+	ComPtr<ID3D12Resource> m_stagingSdfTextureBuffer, m_stagingSdfVoxelBuffer;
 	string m_fileName;
-	XMUINT3 m_sdfResolution;
 
+
+	// none of these are needed. just openvdb tests
 	vector<LeafNode> m_leafLevel;
 	vector<InternalNode> m_internalLevel1, m_internalLevel2;
 	InternalNode m_rootNode;

@@ -6,10 +6,15 @@ void Camera::Initialize(float aspectRatio, float fov)
 	m_aspectRatio = aspectRatio;
 	m_fov = fov;
 
-	//m_position = XMVectorSet(1, 0.85, 3.9, 0);
-	//m_position = XMVectorSet(0.2, 0.65, 2.0, 0);
-	m_position = XMVectorSet(0.0, 0.25, 2.0, 0);
-	//m_position = XMVectorSet(0, 2, 8, 0);
+	m_position = XMVectorSet(0, 0.4, 2.4, 0);
+
+
+	//m_position = XMVectorSet(0, 0.25, 2, 0);  // 2
+	//m_position = XMVectorSet(0, 0.5, 2.5, 0); // 4
+	//m_position = XMVectorSet(0, 0.8, 2.7, 0); // 8
+	//m_position = XMVectorSet(0, 0.8, 3.4, 0); // 16
+	//m_position = XMVectorSet(0, 1.4, 5.0, 0); // 32
+	//m_position = XMVectorSet(0, 1.4, 6.5, 0); // 64
 
 	XMVECTOR dir = XMVector3Normalize(XMVectorSubtract(XMVectorZero(), m_position)); // forward vector - position vector
 
